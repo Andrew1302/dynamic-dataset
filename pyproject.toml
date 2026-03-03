@@ -8,5 +8,11 @@ dependencies = [
     "matplotlib>=3.10.8",
     "networkx",
     "numpy",
+    "Pillow",
     "types-networkx>=3.6.1.20260210",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.4",
 ]

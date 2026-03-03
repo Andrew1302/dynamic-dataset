@@ -1,118 +1,134 @@
-import networkx as nx
+"""CLI entry point for the dynamic dataset generator.
+
+Usage::
+
+    python src/dataset-generator/multimodal.py          # 10 samples, all tasks
+    python src/dataset-generator/multimodal.py -n 50    # 50 samples
+    python src/dataset-generator/multimodal.py --tasks mst shortest_path
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
 import random
+import sys
+
 import numpy as np
-import matplotlib.pyplot as plt
 
-algorithms = []
+# Support running as a script: python src/dataset-generator/multimodal.py
+if __name__ == "__main__" and __package__ is None:
+    _here = os.path.dirname(os.path.abspath(__file__))
+    sys.path.insert(0, os.path.dirname(os.path.dirname(_here)))
+    __package__ = "src.dataset-generator"
+    # Hyphens in package names aren't importable; use importlib to bootstrap
+    import importlib
 
-def register(algorithm):
-    algorithms.append(algorithm)
-    return algorithm
+    importlib.import_module(__package__)
 
-@register
-def mst(n=50):
-    prompt = 'Dado o grafo na imagem abaixo, qual o peso da árvore geradora mínima?\n'
-    #G = nx.random_tree(n)
-    k = min(n-2, 3)
-    G = nx.connected_watts_strogatz_graph(n=n, k=k, p=0.3)
+from . import graph_generator as gg  # noqa: E402
+from .tasks import get_all_tasks  # noqa: E402
 
-    for u, v in G.edges():
-        G[u][v]['weight'] = random.randint(1, int(n/2))
+# ---------------------------------------------------------------------------
+# Which graph generator to use per task
+# ---------------------------------------------------------------------------
+_TASK_GRAPH_BUILDERS: dict[str, callable] = {
+    # tasks requiring weighted connected graphs
+    "mst": gg.random_weighted_connected_graph,
+    "shortest_path": lambda n: gg.add_random_weights(gg.random_connected_graph(n)),
+    # tasks that benefit from possibly-disconnected graphs
+    "connectivity_check": gg.random_possibly_disconnected,
+    "connected_components": gg.random_possibly_disconnected,
+    "reachability": gg.random_possibly_disconnected,
+    # max-flow needs a directed weighted graph
+    "maximum_flow": gg.random_directed_weighted_graph,
+}
 
-    mst = nx.minimum_spanning_tree(G, algorithm='kruskal', weight='weight')
-    weight = mst.size(weight='weight')
-    return prompt, graph2img(G, True), weight
+# Default builder for tasks not listed above
+_DEFAULT_GRAPH_BUILDER = gg.random_graph
 
-@register
-def connected(n=50):
-    prompt = 'Dado o grafo da imagem abaixo, indique se ele é conexo\n'
 
-    p = random.uniform(0, 1)
+def _build_graph_for_task(task_name: str, n: int):
+    builder = _TASK_GRAPH_BUILDERS.get(task_name, _DEFAULT_GRAPH_BUILDER)
+    return builder(n)
 
-    if p <0.5:
-        G = nx.erdos_renyi_graph(n=n, p=0.1)
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Generate multimodal graph QA samples."
+    )
+    parser.add_argument(
+        "-n",
+        "--num-samples",
+        type=int,
+        default=10,
+        help="Number of samples to generate.",
+    )
+    parser.add_argument(
+        "-o", "--output-dir", default="output_samples", help="Output directory."
+    )
+    parser.add_argument("--seed", type=int, default=12227, help="Random seed.")
+    parser.add_argument(
+        "--tasks",
+        nargs="*",
+        default=None,
+        help="Subset of task names to use (default: all).",
+    )
+    parser.add_argument(
+        "--size",
+        choices=["small", "medium", "large"],
+        default="small",
+        help="Graph size preset.",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
+
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    all_tasks = get_all_tasks()
+
+    if args.tasks:
+        task_names = args.tasks
+        for t in task_names:
+            if t not in all_tasks:
+                raise ValueError(f"Unknown task {t!r}. Available: {sorted(all_tasks)}")
     else:
-        G = nx.random_labeled_tree(n)
+        task_names = list(all_tasks.keys())
 
-    return prompt, graph2img(G), nx.is_connected(G)
+    print(f"Generating {args.num_samples} samples across {len(task_names)} tasks …")
+    print(f"Tasks: {', '.join(sorted(task_names))}")
 
-@register
-def connected_components(n=50):
-    prompt = 'Dado o grafo da imagem abaixo, qual o número de componentes conexas?\n'
+    for i in range(args.num_samples):
+        task_name = random.choice(task_names)
+        task = all_tasks[task_name]()
 
-    p = random.uniform(0, 1)
-    if p <0.5:
-        G = nx.erdos_renyi_graph(n=n, p=1/n)
-    else:
-        G = nx.random_labeled_tree(n)
+        n = gg.random_node_count(args.size)
+        G = _build_graph_for_task(task_name, n)
 
-    return prompt, graph2img(G), nx.number_connected_components(G)
+        sample = task.generate(G)
 
-@register
-def shortest_path(n=50):
-    k = min(n-2, 3)
-    G = nx.connected_watts_strogatz_graph(n=n, k=k, p=0.3)
-    #G = nx.path_graph(n)
-    
-    for u, v in G.edges():
-        G[u][v]['weight'] = random.randint(1, int(n/2))
+        prompt = sample["prompt"]
+        image = sample["image"]
+        answer = sample["answer"]
 
-    u, v = random.sample(list(G.nodes()), 2)
-    prompt = 'Dado o grafo da imagem abaixo, indique qual o caminho mínimo '
-    prompt = prompt + f' entre os vértices {u} e {v}\n'
-    c = nx.dijkstra_path_length(G, source=u, target=v, weight='weight')
+        img_path = os.path.join(args.output_dir, f"sample_{i + 1}.png")
+        image.save(img_path, dpi=(120, 120))
 
-    return prompt, graph2img(G, True), c
+        print(f"\n--- Sample {i + 1} [{task_name}] ---")
+        print(prompt)
+        print(f" {answer}")
 
-def graph2img(G, weighted=False):
-    pos = nx.spring_layout(G)  # Organizado
-    nx.draw(G, pos, with_labels=True)
 
-    if weighted:
-        labels = nx.get_edge_attributes(G, 'weight')
-        nx.draw_networkx_edge_labels(G, pos, edge_labels=labels)
-
-    return None#Not sure about the MLLM input (in memory imagem)
-
-def visualization():
-    n = 20
-    #G = nx.connected_watts_strogatz_graph(n=n, k=3, p=0.3)
-    #G = nx.path_graph(n)
-    #G = nx.cycle_graph(n)
-    #G = nx.erdos_renyi_graph(n=n, p=0.1)
-
-    G = nx.connected_watts_strogatz_graph(n=n, k=3, p=0.3)
-    for u, v in G.edges():
-        G[u][v]['weight'] = random.randint(1, int(n/2))
-
-    pos = nx.spring_layout(G)  # mais bonito/organizado
-    nx.draw(G, pos, with_labels=True)
-
-    if True:
-        labels = nx.get_edge_attributes(G, 'weight')
-        nx.draw_networkx_edge_labels(G, pos, edge_labels=labels)
-
-    plt.show()
-
-def main():
-    import os
-    random.seed(12227)  # Garante estocasticidade se necessario
-    np.random.seed(12227)
-    out_dir = "output_samples"
-    os.makedirs(out_dir, exist_ok=True)
-
-    for i in range(3):  # Demo: 3 samples (use 10**6 for full run)
-        n = random.randint(4, 10)
-        text, visual, answer = random.choice(algorithms)(n)
-        print(f"\n--- Sample {i+1} ---")
-        print(text)
-        print(f"Answer: {answer}")
-        plt.savefig(f"{out_dir}/sample_{i+1}.png", dpi=100)
-        plt.close()
-        #input('')
-        #problem, answer = random.choice(algorithms)()
-        #LLM_answer = LLM.predict(problem)
-        #erro = answer - LLM_answer
-        
-
-main()
+if __name__ == "__main__":
+    main()
