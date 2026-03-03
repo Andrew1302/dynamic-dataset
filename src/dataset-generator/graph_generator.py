@@ -19,6 +19,12 @@ SIZE_RANGES = {
 
 
 def random_node_count(size: str = "small") -> int:
+    """Return a random node count for the given size preset.
+
+    Pass ``size="all"`` to pick uniformly from small, medium, and large.
+    """
+    if size == "all":
+        size = random.choice(list(SIZE_RANGES.keys()))
     lo, hi = SIZE_RANGES[size]
     return random.randint(lo, hi)
 
