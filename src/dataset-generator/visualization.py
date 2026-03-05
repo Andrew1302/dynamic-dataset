@@ -8,7 +8,7 @@ import networkx as nx
 from PIL import Image
 
 
-def graph2img(G: nx.Graph, weighted: bool = False) -> Image.Image:
+def graph2img(G: nx.Graph, weighted: bool = False, with_labels: bool = True) -> Image.Image:
     """Render a networkx graph to a PIL Image.
 
     Parameters
@@ -17,6 +17,9 @@ def graph2img(G: nx.Graph, weighted: bool = False) -> Image.Image:
         The graph to draw.
     weighted : bool
         If True, draw edge weight labels.
+    with_labels : bool
+        If True (default), draw node index labels inside each node.
+        Pass False to hide node indices (e.g. for node-counting tasks).
 
     Returns
     -------
@@ -31,7 +34,7 @@ def graph2img(G: nx.Graph, weighted: bool = False) -> Image.Image:
         G,
         pos,
         ax=ax,
-        with_labels=True,
+        with_labels=with_labels,
         node_color="lightblue",
         node_size=400,
         font_size=9,

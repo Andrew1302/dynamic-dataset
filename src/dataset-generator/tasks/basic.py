@@ -14,7 +14,7 @@ class NodeCount(GraphTask):
     name = "node_count"
 
     def generate(self, G, **kw):
-        image = graph2img(G)
+        image = graph2img(G, with_labels=False)
         answer = str(G.number_of_nodes())
         prompt = "Q: How many nodes are in this graph?\nA:"
         return {"prompt": prompt, "image": image, "answer": answer}
