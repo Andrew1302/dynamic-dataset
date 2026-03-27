@@ -13,13 +13,16 @@ from __future__ import annotations
 
 import collections
 import itertools
+from typing import TYPE_CHECKING
 import math
 import random
 from typing import Any
 
 import networkx as nx
+from PIL import Image
 
 from .base import ProblemVariant, ProjectionFailure
+from .visualization import draw_graph, draw_maze, draw_word_ladder
 
 # ---------------------------------------------------------------------------
 # Variant 1A — Bare Graph
@@ -106,6 +109,17 @@ class BareGraphVariant(ProblemVariant):
                 f"Find the shortest path from node {src} to node {tgt}.\n"
                 f"Give the path as a list of node IDs and the number of hops.\nA:"
             )
+
+    def to_image(self, instance: dict[str, Any]) -> Image.Image:
+        """Draw the bare graph with source highlighted green, target red."""
+        G = self._rebuild(instance)
+        return draw_graph(
+            G,
+            source=instance["source"],
+            target=instance["target"],
+            weighted=instance["weighted"],
+            title=f"Shortest Path  |  source={instance['source']}  target={instance['target']}",
+        )
 
     # ------------------------------------------------------------------
     def _rebuild(self, instance: dict[str, Any]) -> nx.Graph:
@@ -294,6 +308,15 @@ class MazeVariant(ProblemVariant):
             f"Find the shortest path (fewest steps) from start to goal.\n"
             f"Report the path as a list of (row, col) coordinates and the total steps.\n\n"
             f"{grid_str}\nA:"
+        )
+
+    def to_image(self, instance: dict[str, Any]) -> Image.Image:
+        """Render the maze grid as a colour pixel image (green=start, red=goal)."""
+        return draw_maze(
+            instance["grid"],
+            instance["start"],
+            instance["end"],
+            title="Maze  |  green=start  red=goal",
         )
 
 
@@ -492,6 +515,15 @@ class WordLadderVariant(ProblemVariant):
             f"Each intermediate word must belong to the vocabulary, and each step must "
             f"change exactly one letter.\n"
             f"Give the transformation sequence and the number of steps.\nA:"
+        )
+
+    def to_image(self, instance: dict[str, Any]) -> Image.Image:
+        """Draw the word-ladder vocabulary as a Hamming-1 word graph."""
+        return draw_word_ladder(
+            instance["vocabulary"],
+            instance["source_word"],
+            instance["target_word"],
+            title=f"Word Ladder  |  '{instance['source_word']}' -> '{instance['target_word']}'",
         )
 
 

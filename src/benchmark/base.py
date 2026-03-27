@@ -12,10 +12,13 @@ from __future__ import annotations
 import math
 import random
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import networkx as nx
 import numpy as np
+
+if TYPE_CHECKING:
+    from PIL import Image as PILImage
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +212,15 @@ class ProblemVariant(ABC):
         """Render the instance as a natural-language LLM prompt.
 
         Must expose only the domain surface — never the raw graph structure.
+        """
+
+    @abstractmethod
+    def to_image(self, instance: dict[str, Any]) -> "PILImage.Image":
+        """Render the instance as a PIL image for multimodal LLM input.
+
+        The image should convey the same information as to_prompt() but visually.
+        Domain-specific: graphs drawn as node-edge diagrams, mazes as pixel grids,
+        puzzles as board illustrations, etc.
         """
 
 

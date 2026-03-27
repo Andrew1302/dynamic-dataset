@@ -22,8 +22,10 @@ import random
 from typing import Any
 
 import networkx as nx
+from PIL import Image
 
 from .base import ProblemVariant, ProjectionFailure
+from .visualization import draw_graph, draw_hanoi, draw_sliding_puzzle
 
 # ---------------------------------------------------------------------------
 # Variant 2A — Bare State Graph
@@ -118,6 +120,17 @@ class BareStateGraphVariant(ProblemVariant):
             f"Transitions: {trans_str}\n"
             f"Find a path from state {s0} to state {sg}.\n"
             f"Give the path as a list of state IDs and the number of steps.\nA:"
+        )
+
+    def to_image(self, instance: dict[str, Any]) -> Image.Image:
+        """Draw the state transition graph (= bare graph G) with source/target highlighted."""
+        G = self.to_base_graph(instance)
+        return draw_graph(
+            G,
+            source=instance["s0"],
+            target=instance["s_goal"],
+            weighted=False,
+            title=f"State Graph  |  s0={instance['s0']}  goal={instance['s_goal']}",
         )
 
 
@@ -256,6 +269,15 @@ class SlidingPuzzleVariant(ProblemVariant):
             f"Find the minimum sequence of moves to reach the goal.\n"
             f"Each move slides the blank tile: U=up, D=down, L=left, R=right.\n"
             f"Give the sequence of moves and the total number of moves.\nA:"
+        )
+
+    def to_image(self, instance: dict[str, Any]) -> Image.Image:
+        """Render the sliding puzzle initial and goal boards side by side."""
+        return draw_sliding_puzzle(
+            instance["initial"],
+            instance["n"],
+            goal=instance["goal"],
+            title=f"{instance['n']}x{instance['n']} Sliding Puzzle  |  optimal moves = {instance['optimal_length']}",
         )
 
 
@@ -500,6 +522,16 @@ class TowerOfHanoiVariant(ProblemVariant):
             f"Each move transfers the topmost (smallest) disk from one peg to another peg "
             f"where the destination is either empty or has a larger top disk.\n"
             f"Give each move as (from_peg, to_peg) and the total number of moves.\nA:"
+        )
+
+    def to_image(self, instance: dict[str, Any]) -> Image.Image:
+        """Render the Tower of Hanoi initial and goal configurations."""
+        return draw_hanoi(
+            instance["initial"],
+            instance["n_disks"],
+            instance["n_pegs"],
+            goal=instance["goal"],
+            title=f"Tower of Hanoi  |  {instance['n_disks']} disks  {instance['n_pegs']} pegs  |  optimal = {instance['optimal_length']} moves",
         )
 
 
