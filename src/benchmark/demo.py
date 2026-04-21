@@ -1,194 +1,83 @@
-"""
-demo.py — End-to-end demonstration of the graph-disguise benchmark.
+"""CLI entry point: generate benchmark samples and write five artifacts each.
 
-For each difficulty level (easy / medium / hard), this script:
-    1. Generates a base graph G.
-    2. Projects G into three variants per family.
-    3. Solves each projected instance.
-    4. Verifies each solution.
-    5. Runs pairwise isomorphism checks between projections.
-    6. Prints the LLM-facing prompts.
+Each sample produces five files in ``--output-dir``:
 
-Run with:
-    uv run python src/benchmark/demo.py
+- ``sample_{i}_{task}_direct.png``
+- ``sample_{i}_{task}_direct_prompt.txt``
+- ``sample_{i}_{task}_disguise.png``
+- ``sample_{i}_{task}_disguise_prompt.txt``
+- ``sample_{i}_{task}_answer.txt``
 
-Expected: all isomorphism checks print ISOMORPHIC and all verifications pass.
+Pass ``--pdf`` to also emit a combined ``report.pdf``.
 """
 
 from __future__ import annotations
 
-import random
-import textwrap
+import argparse
+import os
+import sys
 
-from .base import BaseGraphGenerator, ProjectionFailure, are_isomorphic_instances
-from .shortest_path_variants import BareGraphVariant, MazeVariant, WordLadderVariant
-from .state_search_variants import (
-    BareStateGraphVariant,
-    SlidingPuzzleVariant,
-    TowerOfHanoiVariant,
-)
-
-# ---------------------------------------------------------------------------
-# Difficulty presets (mirrors the spec's suggested values)
-# ---------------------------------------------------------------------------
-
-DIFFICULTY_CONFIGS: dict[str, dict] = {
-    "easy":   {"n_nodes": 5,  "graph_type": "tree",   "weighted": False},
-    "medium": {"n_nodes": 8,  "graph_type": "sparse",  "weighted": True},
-    "hard":   {"n_nodes": 12, "graph_type": "random",  "weighted": True},
-}
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-_SEP = "=" * 68
+from .base import Sample, get_all_tasks, get_task
+from .report import build_pdf
 
 
-def _header(text: str) -> None:
-    print(f"\n{_SEP}\n{text}\n{_SEP}")
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    all_task_names = sorted(get_all_tasks().keys())
+    parser = argparse.ArgumentParser(description="Graph-disguise benchmark generator.")
+    parser.add_argument(
+        "--tasks",
+        nargs="+",
+        default=all_task_names,
+        choices=all_task_names,
+        help="Subset of tasks to run. Default: all.",
+    )
+    parser.add_argument(
+        "--difficulty",
+        choices=["easy", "medium", "hard"],
+        default="easy",
+    )
+    parser.add_argument("-n", "--num-samples", type=int, default=3)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("-o", "--output-dir", default="out/benchmark")
+    parser.add_argument("--pdf", action="store_true", help="Also produce report.pdf.")
+    return parser.parse_args(argv)
 
 
-def _subheader(text: str) -> None:
-    print(f"\n--- {text} ---")
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    collected: list[tuple[str, str, int, Sample]] = []
+    for i in range(args.num_samples):
+        for task_name in args.tasks:
+            task = get_task(task_name)()
+            seed = args.seed + i * len(args.tasks) + hash(task_name) % 1000
+            sample = task.generate(seed=seed, difficulty=args.difficulty)
+            _write_sample(args.output_dir, i + 1, task_name, sample)
+            collected.append((task_name, args.difficulty, seed, sample))
+            print(f"[sample {i + 1}] task={task_name} answer={sample['answer']}")
+
+    if args.pdf:
+        pdf_path = os.path.join(args.output_dir, "report.pdf")
+        build_pdf(collected, pdf_path)
+        print(f"PDF written to {pdf_path}")
+
+    return 0
 
 
-def _print_prompt(prompt: str, max_chars: int = 800) -> None:
-    if len(prompt) > max_chars:
-        prompt = prompt[:max_chars] + " ...[truncated]"
-    print(textwrap.indent(prompt, "  "))
+def _write_sample(out_dir: str, idx: int, task: str, sample: Sample) -> None:
+    stem = f"sample_{idx}_{task}"
+    sample["direct_image"].save(os.path.join(out_dir, f"{stem}_direct.png"))
+    sample["disguise_image"].save(os.path.join(out_dir, f"{stem}_disguise.png"))
+    _write_text(out_dir, f"{stem}_direct_prompt.txt", sample["direct_prompt"])
+    _write_text(out_dir, f"{stem}_disguise_prompt.txt", sample["disguise_prompt"])
+    _write_text(out_dir, f"{stem}_answer.txt", sample["answer"])
 
 
-# ---------------------------------------------------------------------------
-# Family 1: Shortest Path
-# ---------------------------------------------------------------------------
-
-
-def demo_family1(difficulty: str, base_seed: int = 42) -> None:
-    """Generate one shortest-path triple and verify structural isomorphism."""
-    cfg = DIFFICULTY_CONFIGS[difficulty]
-    _header(f"FAMILY 1 — SHORTEST PATH — {difficulty.upper()}")
-    print(f"Config: {cfg}  seed={base_seed}")
-
-    G = BaseGraphGenerator.generate(seed=base_seed, **cfg)
-    print(f"Graph: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
-
-    rng = random.Random(base_seed)
-    source, target = rng.sample(sorted(G.nodes()), 2)
-    print(f"Source: {source}  Target: {target}")
-
-    variants: list[tuple[str, object]] = [
-        ("BareGraph",   BareGraphVariant()),
-        ("Maze",        MazeVariant()),
-        ("WordLadder",  WordLadderVariant()),
-    ]
-
-    instances: dict[str, dict] = {}
-    solutions: dict[str, dict] = {}
-
-    for i, (name, variant) in enumerate(variants):
-        _subheader(name)
-        v_seed = base_seed + (i + 1) * 1000
-        try:
-            inst = variant.project(G, source, target, seed=v_seed)  # type: ignore[union-attr]
-            sol = variant.solve(inst)                                 # type: ignore[union-attr]
-            ok = variant.verify(inst, sol)                           # type: ignore[union-attr]
-            instances[name] = inst
-            solutions[name] = sol
-            print(f"Solution cost: {sol['cost']}   verify: {'PASS' if ok else 'FAIL'}")
-            print(f"Base path: {sol.get('base_path', '—')}")
-            _subheader(f"{name} prompt")
-            _print_prompt(variant.to_prompt(inst))                   # type: ignore[union-attr]
-        except ProjectionFailure as exc:
-            print(f"ProjectionFailure: {exc}")
-
-    # Pairwise isomorphism checks
-    _subheader("Isomorphism verification")
-    names = list(instances.keys())
-    variant_map = dict(variants)
-    for i, na in enumerate(names):
-        for nb in names[i + 1:]:
-            try:
-                iso = are_isomorphic_instances(
-                    instances[na], variant_map[na],   # type: ignore[arg-type]
-                    instances[nb], variant_map[nb],   # type: ignore[arg-type]
-                )
-                symbol = "ISOMORPHIC [OK]" if iso else "NOT ISOMORPHIC [FAIL]"
-                print(f"  {na} <-> {nb}: {symbol}")
-            except Exception as exc:
-                print(f"  {na} <-> {nb}: ERROR — {exc}")
-
-
-# ---------------------------------------------------------------------------
-# Family 2: State Space Search
-# ---------------------------------------------------------------------------
-
-
-def demo_family2(difficulty: str, base_seed: int = 200) -> None:
-    """Generate one state-search triple and verify structural isomorphism."""
-    cfg = DIFFICULTY_CONFIGS[difficulty]
-    _header(f"FAMILY 2 — STATE SPACE SEARCH — {difficulty.upper()}")
-    print(f"Config: {cfg}  seed={base_seed}")
-
-    G = BaseGraphGenerator.generate(seed=base_seed, **cfg)
-    print(f"Graph: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
-
-    rng = random.Random(base_seed)
-    source, target = rng.sample(sorted(G.nodes()), 2)
-    print(f"Source: {source}  Target: {target}")
-
-    variants: list[tuple[str, object]] = [
-        ("BareState",     BareStateGraphVariant()),
-        ("SlidingPuzzle", SlidingPuzzleVariant()),
-        ("TowerOfHanoi",  TowerOfHanoiVariant()),
-    ]
-
-    instances: dict[str, dict] = {}
-    solutions: dict[str, dict] = {}
-
-    for i, (name, variant) in enumerate(variants):
-        _subheader(name)
-        v_seed = base_seed + (i + 1) * 1000
-        try:
-            inst = variant.project(G, source, target, seed=v_seed)  # type: ignore[union-attr]
-            sol = variant.solve(inst)                                 # type: ignore[union-attr]
-            ok = variant.verify(inst, sol)                           # type: ignore[union-attr]
-            instances[name] = inst
-            solutions[name] = sol
-            print(f"Solution cost: {sol['cost']}   verify: {'PASS' if ok else 'FAIL'}")
-            print(f"Base path: {sol.get('base_path', '—')}")
-            _subheader(f"{name} prompt")
-            _print_prompt(variant.to_prompt(inst))                   # type: ignore[union-attr]
-        except ProjectionFailure as exc:
-            print(f"ProjectionFailure: {exc}")
-
-    # Pairwise isomorphism checks
-    _subheader("Isomorphism verification")
-    names = list(instances.keys())
-    variant_map = dict(variants)
-    for i, na in enumerate(names):
-        for nb in names[i + 1:]:
-            try:
-                iso = are_isomorphic_instances(
-                    instances[na], variant_map[na],   # type: ignore[arg-type]
-                    instances[nb], variant_map[nb],   # type: ignore[arg-type]
-                )
-                symbol = "ISOMORPHIC [OK]" if iso else "NOT ISOMORPHIC [FAIL]"
-                print(f"  {na} <-> {nb}: {symbol}")
-            except Exception as exc:
-                print(f"  {na} <-> {nb}: ERROR — {exc}")
-
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
-
-def main() -> None:
-    for difficulty in ["easy", "medium", "hard"]:
-        demo_family1(difficulty, base_seed=42)
-        demo_family2(difficulty, base_seed=42)
+def _write_text(out_dir: str, name: str, content: str) -> None:
+    with open(os.path.join(out_dir, name), "w", encoding="utf-8") as f:
+        f.write(content)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

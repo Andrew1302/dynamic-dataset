@@ -1,17 +1,12 @@
-"""Graph-disguise benchmark package."""
-from .base import BaseGraphGenerator, ProjectionFailure, ProblemVariant, are_isomorphic_instances
-from .shortest_path_variants import BareGraphVariant, MazeVariant, WordLadderVariant
-from .state_search_variants import BareStateGraphVariant, SlidingPuzzleVariant, TowerOfHanoiVariant
+"""Graph-disguise benchmark package.
 
-__all__ = [
-    "BaseGraphGenerator",
-    "ProjectionFailure",
-    "ProblemVariant",
-    "are_isomorphic_instances",
-    "BareGraphVariant",
-    "MazeVariant",
-    "WordLadderVariant",
-    "BareStateGraphVariant",
-    "SlidingPuzzleVariant",
-    "TowerOfHanoiVariant",
-]
+Each :class:`BenchmarkTask` pairs a graph-theoretic question with exactly
+one visual disguise. Every call to :py:meth:`BenchmarkTask.generate`
+returns five artifacts (direct prompt + image, disguise prompt + image,
+shared ground-truth answer) for a fresh random graph.
+"""
+
+from .base import BenchmarkTask, Sample, get_all_tasks, get_task
+from . import tasks  # noqa: F401  (triggers task registration)
+
+__all__ = ["BenchmarkTask", "Sample", "get_all_tasks", "get_task"]

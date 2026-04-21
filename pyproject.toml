@@ -10,6 +10,7 @@ dependencies = [
     "numpy",
     "Pillow",
     "reportlab>=4.0.0",
+    "scipy>=1.11",
     "types-networkx>=3.6.1.20260210",
 ]
 
