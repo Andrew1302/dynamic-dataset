@@ -35,11 +35,13 @@ class ColoringTask(BenchmarkTask):
             "neighboring regions share the same color?\nA:"
         )
 
-    def render_disguise(self, G: nx.Graph, seed: int) -> Image.Image:
+    def render_disguise(
+        self, G: nx.Graph, seed: int, show_node_ids: bool = True
+    ) -> Image.Image:
         pos = {n: G.nodes[n].get("pos") for n in G.nodes()}
         if all(p is not None for p in pos.values()):
-            return render_map(G, seed=seed, pos=pos)
-        return render_map(G, seed=seed)
+            return render_map(G, seed=seed, pos=pos, show_labels=show_node_ids)
+        return render_map(G, seed=seed, show_labels=show_node_ids)
 
 
 def _chromatic_number(G: nx.Graph) -> int:

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import networkx as nx
 import numpy as np
-from scipy.spatial import Delaunay
+from scipy.spatial import Delaunay, Voronoi
 
 
 _CONNECTIVITY_SIZES: dict[str, tuple[int, int]] = {
@@ -66,19 +66,21 @@ def connectivity_graph(
 
 
 def coloring_graph(rng: np.random.Generator, difficulty: str) -> nx.Graph:
-    """Return a connected planar graph via Delaunay triangulation.
+    """Return a Delaunay triangulation over random points in the unit square.
 
-    Points are drawn uniformly in the unit square; the Delaunay
-    triangulation gives a planar graph (chromatic ≤ 4 by the four-color
-    theorem, typically 3 for small random point sets). Some boundary
-    edges are randomly dropped to widen the chromatic-number
-    distribution while keeping the graph planar and connected.
+    Keeping the full triangulation (no edge drops) lets the map-disguise
+    renderer use Voronoi cells directly — adjacency in the Voronoi diagram
+    equals adjacency in the Delaunay graph by duality, so the disguise
+    matches G exactly. Chromatic number is ≤ 4 by the four-color theorem
+    (typically 3 or 4 on small random point sets).
     """
     lo, hi = _COLORING_SIZES[difficulty]
     target = int(rng.integers(lo, hi + 1))
 
-    for _ in range(30):
+    for _ in range(80):
         pts = rng.random((target, 2))
+        if not _voronoi_well_behaved(pts):
+            continue
         try:
             tri = Delaunay(pts)
         except Exception:
@@ -92,26 +94,27 @@ def coloring_graph(rng: np.random.Generator, difficulty: str) -> nx.Graph:
         G = nx.Graph()
         G.add_nodes_from(range(target))
         G.add_edges_from(edges)
-
-        outer = _hull_edges(tri)
-        removable = [e for e in outer if G.degree(e[0]) > 2 and G.degree(e[1]) > 2]
-        rng.shuffle(removable)
-        for edge in removable[: len(removable) // 3]:
-            H = G.copy()
-            H.remove_edge(*edge)
-            if nx.is_connected(H):
-                G = H
-
         for i in range(target):
             G.nodes[i]["pos"] = (float(pts[i, 0]), float(pts[i, 1]))
+
         if nx.is_connected(G):
+            assert nx.check_planarity(G)[0], "Delaunay triangulation must be planar"
             return G
 
     return nx.cycle_graph(target)
 
 
-def _hull_edges(tri: Delaunay) -> list[tuple[int, int]]:
-    edges: list[tuple[int, int]] = []
-    for a, b in tri.convex_hull:
-        edges.append((min(int(a), int(b)), max(int(a), int(b))))
-    return edges
+def _voronoi_well_behaved(pts: np.ndarray, max_ratio: float = 1.2) -> bool:
+    """Reject point sets whose Voronoi diagram has vertices far outside the
+    point cloud. Near-collinear triples produce distant circumcenters that
+    stretch the map beyond recognition in the disguise renderer."""
+    try:
+        vor = Voronoi(pts)
+    except Exception:
+        return False
+    center = pts.mean(axis=0)
+    pt_radius = float(np.linalg.norm(pts - center, axis=1).max())
+    if pt_radius < 1e-9:
+        return False
+    vor_radius = float(np.linalg.norm(vor.vertices - center, axis=1).max())
+    return vor_radius <= max_ratio * pt_radius
