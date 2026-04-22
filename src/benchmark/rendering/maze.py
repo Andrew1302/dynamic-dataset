@@ -1,28 +1,38 @@
-"""Maze disguise: graph → 2D maze with entrance and exit.
+"""Maze disguise: lattice graph → 2D maze with entrance and exit.
 
-Algorithm (graph-constrained Voronoi + backbone-first carver):
+Ownership grid
+--------------
+The fine grid tiles one ``block × block`` territory per lattice slot
+(``block`` odd, default 7), with 1-cell walls between blocks:
 
-1. Partition a square grid into one Voronoi region per graph node. The
-   partition is graph-constrained: two cells of different regions touch
-   only if the corresponding nodes share a graph edge (a single-cell
-   wall is inserted otherwise).
-2. Phase 1 — edge backbones. For every edge (u, v) of G, find a
-   shortest 2-step path from ``seed[u]`` to ``seed[v]`` restricted to
-   cells owned by u or v, and carve it. Each graph edge becomes a
-   short, direct corridor between its two node markers, so the maze's
-   primary topology mirrors G.
-3. Phase 2 — bounded dead-end branches. Starting from already-carved
-   backbone cells, run a recursive-backtracker that adds dead-end
-   sprouts, capped by ``branch_budget_ratio * backbone_cells`` extra
-   cells. Keeps the maze aesthetic without drowning the backbones.
-4. Paint the entrance (green) and exit (red) at their region seeds.
-   When ``highlight_all_nodes`` is set, every other node seed is blue.
+- block (lr, lc) interior cells, if a node lives there → ``owner = node_idx``
+- block (lr, lc) interior cells, if the slot is empty → ``owner = FILLER``
+  (a dummy id past the last node index)
+- **shared wall cells between edge-connected node neighbors** → owner is
+  set to one of the two nodes (carver can cross freely)
+- **shared wall cells between two empty neighbors** → ``owner = FILLER``
+  (filler corridors merge across empty slots)
+- shared wall cells between a node and an empty slot, or between
+  non-edge node neighbors → ``-1`` (hard wall)
+- intersection cells at ``(k*step, j*step)`` → always ``-1``
 
-Correctness: both phases only traverse cells owned by adjacent-in-G
-regions (the Voronoi's conflict rule guarantees that cross-region
-4-adjacency implies a G edge), so corridor reachability matches
-connected components of G — a path from entrance to exit in the maze
-exists iff ``nx.has_path(G, entrance, exit)``.
+Correctness by construction
+---------------------------
+The unified recursive-backtracker dead-end carver advances only via
+2-step jumps whose midpoint and landing both have ``owner ≥ 0``. So:
+
+- Corridors flow freely through edge shared-walls (multiple crossing
+  points, organic look — no rigid "single door per edge")
+- Non-edge walls stay intact (owner = -1 everywhere on them)
+- Intersection cells are always -1, blocking diagonal leaks
+- Filler corridors live in their own connected region, isolated from
+  every node's corridor network by ``-1`` node↔empty shared walls —
+  they're decorative dead-ends that visually fill what would otherwise
+  be giant black gaps, without affecting entrance/exit reachability
+
+Invariant: corridor reachability in the rendered maze between any two
+**node** seeds is **identical** to connected components of ``G``. No BFS
+routing, no fallbacks, no retries.
 """
 
 from __future__ import annotations
@@ -32,8 +42,6 @@ from io import BytesIO
 import networkx as nx
 import numpy as np
 from PIL import Image, ImageDraw
-
-from ._voronoi import build_voronoi
 
 
 _WALL = np.uint8(0)
@@ -55,193 +63,171 @@ def render_maze(
     entrance: int,
     exit: int,
     cell_px: int = 14,
-    grid_size: int | None = None,
+    block: int = 7,
     highlight_all_nodes: bool = True,
-    branch_budget_ratio: float | None = None,
 ) -> Image.Image:
-    """Render *G* as a 2D maze and return it as a PIL image.
+    """Render *G* (a lattice subgraph) as a 2D maze.
 
     Parameters
     ----------
     G
-        NetworkX graph.
+        NetworkX graph with ``G.nodes[n]["lattice"] = (row, col)`` on every
+        node. Edges must only connect lattice-adjacent pairs.
     seed
-        RNG seed for the Voronoi layout noise and the carver.
+        RNG seed for seed placement jitter and dead-end branching.
     entrance, exit
-        Node ids whose region seeds are painted green and red.
+        Node ids whose seed cells are painted green and red.
     cell_px
-        Pixel size of one grid cell.
-    grid_size
-        Override the default grid side length. Forced odd to keep the
-        2-step carver aligned.
+        Pixel size of one fine-grid cell.
+    block
+        Fine cells per side of one node's block (odd, default 7).
     highlight_all_nodes
-        When true, paint every non-endpoint node's seed in blue in
-        addition to the green entrance and red exit.
-    branch_budget_ratio
-        Fraction of backbone cells to allow as extra dead-end cells in
-        phase 2. ``None`` (default) = unlimited, i.e. the carver runs
-        until no more 2-step moves are possible (fully filled maze with
-        dead-ends in every region). ``0.0`` = pure skeleton (edges only,
-        no dead-ends).
+        When true, paint every non-endpoint node's seed blue.
     """
-    n = G.number_of_nodes()
-    if grid_size is None:
-        grid_size = max(11, int(n * 1.5) + 5)
-    if grid_size % 2 == 0:
-        grid_size += 1
+    positions = {n: G.nodes[n]["lattice"] for n in G.nodes()}
+    H = max(p[0] for p in positions.values()) + 1
+    W = max(p[1] for p in positions.values()) + 1
 
-    owner, _node_pos, nodes, _ = build_voronoi(G, seed, grid_size=grid_size)
-    node_idx = {nd: i for i, nd in enumerate(nodes)}
-    rng = np.random.default_rng(seed + 17)
+    step = block + 1
+    fh = H * step + 1
+    fw = W * step + 1
 
-    maze = np.full(owner.shape, _WALL, dtype=np.uint8)
+    rng = np.random.default_rng(seed)
+    node_ids = list(G.nodes())
+    node_idx = {n: i for i, n in enumerate(node_ids)}
+    pos_to_node = {positions[n]: n for n in node_ids}
 
+    FILLER = len(node_ids)
+
+    owner = np.full((fh, fw), -1, dtype=np.int32)
+
+    for lr in range(H):
+        for lc in range(W):
+            r0 = 1 + lr * step
+            c0 = 1 + lc * step
+            if (lr, lc) in pos_to_node:
+                owner[r0 : r0 + block, c0 : c0 + block] = node_idx[pos_to_node[(lr, lc)]]
+            else:
+                owner[r0 : r0 + block, c0 : c0 + block] = FILLER
+
+    # Vertical shared walls.
+    for lc in range(W - 1):
+        wall_c = (lc + 1) * step
+        for lr in range(H):
+            pa, pb = (lr, lc), (lr, lc + 1)
+            a_node = pa in pos_to_node
+            b_node = pb in pos_to_node
+            r0 = 1 + lr * step
+            if a_node and b_node:
+                a, b = pos_to_node[pa], pos_to_node[pb]
+                if G.has_edge(a, b):
+                    owner[r0 : r0 + block, wall_c] = node_idx[a]
+            elif not a_node and not b_node:
+                owner[r0 : r0 + block, wall_c] = FILLER
+            # node ↔ empty stays -1 so filler never leaks into a node network
+
+    # Horizontal shared walls.
+    for lr in range(H - 1):
+        wall_r = (lr + 1) * step
+        for lc in range(W):
+            pa, pb = (lr, lc), (lr + 1, lc)
+            a_node = pa in pos_to_node
+            b_node = pb in pos_to_node
+            c0 = 1 + lc * step
+            if a_node and b_node:
+                a, b = pos_to_node[pa], pos_to_node[pb]
+                if G.has_edge(a, b):
+                    owner[wall_r, c0 : c0 + block] = node_idx[a]
+            elif not a_node and not b_node:
+                owner[wall_r, c0 : c0 + block] = FILLER
+
+    # Seeds at random even-offsets so entrance/exit aren't always centered.
+    offsets = list(range(0, block, 2))
     seeds: dict[int, tuple[int, int]] = {}
-    for i in range(len(nodes)):
-        cells = np.argwhere(owner == i)
-        if len(cells) == 0:
-            continue
-        seeds[i] = _region_seed(cells)
+    for n, (lr, lc) in positions.items():
+        r0 = 1 + lr * step
+        c0 = 1 + lc * step
+        dr = offsets[int(rng.integers(0, len(offsets)))]
+        dc = offsets[int(rng.integers(0, len(offsets)))]
+        seeds[n] = (r0 + dr, c0 + dc)
 
+    # One filler seed per empty slot. Since all filler interiors and
+    # filler↔filler walls share owner=FILLER, the carver will merge these
+    # into one connected filler region (per lattice-connected blob of
+    # empty slots) — never touching any node region.
+    filler_seeds: list[tuple[int, int]] = []
+    for lr in range(H):
+        for lc in range(W):
+            if (lr, lc) in pos_to_node:
+                continue
+            r0 = 1 + lr * step
+            c0 = 1 + lc * step
+            dr = offsets[int(rng.integers(0, len(offsets)))]
+            dc = offsets[int(rng.integers(0, len(offsets)))]
+            filler_seeds.append((r0 + dr, c0 + dc))
+
+    maze = np.full((fh, fw), _WALL, dtype=np.uint8)
     for s in seeds.values():
         maze[s] = _CORRIDOR
+    for s in filler_seeds:
+        maze[s] = _CORRIDOR
 
-    for u, v in G.edges():
-        iu, iv = node_idx[u], node_idx[v]
-        if iu not in seeds or iv not in seeds:
-            continue
-        path = _find_backbone(owner, seeds[iu], seeds[iv], {iu, iv})
-        if path is None:
-            continue
-        _carve_path(maze, path)
+    _carve_branches(maze, owner, rng)
 
-    if branch_budget_ratio is None:
-        _carve_branches(maze, owner, rng, None)
-    else:
-        backbone_cells = int(np.sum(maze == _CORRIDOR))
-        budget = int(backbone_cells * branch_budget_ratio)
-        if budget > 0:
-            _carve_branches(maze, owner, rng, budget)
-
-    return _render_image(
-        maze,
-        cell_px,
-        seeds[node_idx[entrance]],
-        seeds[node_idx[exit]],
-        _other_seeds(seeds, node_idx, entrance, exit) if highlight_all_nodes else [],
+    other_seeds = (
+        [s for n, s in seeds.items() if n != entrance and n != exit]
+        if highlight_all_nodes
+        else []
     )
-
-
-def _region_seed(cells: np.ndarray) -> tuple[int, int]:
-    """Pick an (even, even) cell in the region closest to its centroid.
-
-    The recursive-backtracker carver advances in 2-step jumps, so every
-    carved cell inherits the seed's parity. Using a consistent
-    (even, even) parity across all region seeds keeps walls and
-    corridors cleanly alternating; mixing parities across seeds causes
-    midpoints from one carve to overlap corridors from another,
-    producing open swiss-cheese regions instead of a maze.
-    """
-    cr, cc = cells.mean(axis=0)
-    mask = (cells[:, 0] % 2 == 0) & (cells[:, 1] % 2 == 0)
-    candidates = cells[mask] if mask.any() else cells
-    dists = (candidates[:, 0] - cr) ** 2 + (candidates[:, 1] - cc) ** 2
-    r, c = candidates[int(np.argmin(dists))]
-    return int(r), int(c)
-
-
-def _other_seeds(
-    seeds: dict[int, tuple[int, int]],
-    node_idx: dict,
-    entrance,
-    exit,
-) -> list[tuple[int, int]]:
-    skip = {node_idx[entrance], node_idx[exit]}
-    return [c for i, c in seeds.items() if i not in skip]
-
-
-def _find_backbone(
-    owner: np.ndarray,
-    src: tuple[int, int],
-    dst: tuple[int, int],
-    allowed: set[int],
-) -> list[tuple[int, int]] | None:
-    """Shortest 2-step path from *src* to *dst*, restricted to cells whose
-    ``owner`` is in *allowed*. Returns the cell list inclusive, or None.
-    """
-    if src == dst:
-        return [src]
-    h, w = owner.shape
-    parent: dict[tuple[int, int], tuple[int, int] | None] = {src: None}
-    frontier: list[tuple[int, int]] = [src]
-    while frontier:
-        nxt: list[tuple[int, int]] = []
-        for r, c in frontier:
-            for dr, dc in _DIRS_2:
-                nr, nc = r + dr, c + dc
-                mr, mc = r + dr // 2, c + dc // 2
-                if not (0 <= nr < h and 0 <= nc < w):
-                    continue
-                if int(owner[nr, nc]) not in allowed:
-                    continue
-                if int(owner[mr, mc]) not in allowed:
-                    continue
-                if (nr, nc) in parent:
-                    continue
-                parent[(nr, nc)] = (r, c)
-                if (nr, nc) == dst:
-                    path: list[tuple[int, int]] = []
-                    cur: tuple[int, int] | None = dst
-                    while cur is not None:
-                        path.append(cur)
-                        cur = parent[cur]
-                    path.reverse()
-                    return path
-                nxt.append((nr, nc))
-        frontier = nxt
-    return None
-
-
-def _carve_path(maze: np.ndarray, path: list[tuple[int, int]]) -> None:
-    """Carve every cell in *path* plus the midpoint between consecutive pairs."""
-    for i, (r, c) in enumerate(path):
-        maze[r, c] = _CORRIDOR
-        if i > 0:
-            pr, pc = path[i - 1]
-            maze[(r + pr) // 2, (c + pc) // 2] = _CORRIDOR
+    return _render_image(maze, cell_px, seeds[entrance], seeds[exit], other_seeds)
 
 
 def _carve_branches(
-    maze: np.ndarray,
-    owner: np.ndarray,
-    rng: np.random.Generator,
-    budget: int | None,
+    maze: np.ndarray, owner: np.ndarray, rng: np.random.Generator
 ) -> None:
-    """Sprout dead-end branches off existing corridor cells.
+    """Recursive-backtracker flood carver, 2-step jumps, owner-aware.
 
-    Recursive-backtracker style walk seeded at every existing corridor
-    cell. When *budget* is an int, caps total new corridor cells so
-    backbones stay dominant. When ``None``, runs to completion — every
-    2-step-reachable owned cell is eventually carved, producing a fully
-    dense maze with dead-ends in every region.
+    Every jump's midpoint and landing cell must have ``owner ≥ 0``.
+    Consequence: corridors flow across edge shared-walls freely, never
+    cross non-edge shared-walls or intersection cells (both owner = -1).
+    Seeds of connected-in-G nodes end up in the same corridor network.
+
+    Each seed first receives one guaranteed 2-step extension (carving the
+    midpoint and, if not already, the landing). Without this, a seed
+    processed late by the main backtracker could find all four of its
+    2-step landings already corridor — at which point the backtracker
+    pops immediately, leaving the seed's midpoint neighbors as walls and
+    the seed itself a disconnected island.
     """
     h, w = maze.shape
-    corridor = np.argwhere(maze == _CORRIDOR)
-    if len(corridor) == 0:
+    seeds = np.argwhere(maze == _CORRIDOR)
+    if len(seeds) == 0:
         return
+
+    for i in rng.permutation(len(seeds)):
+        r, c = int(seeds[i, 0]), int(seeds[i, 1])
+        for k in rng.permutation(4):
+            dr, dc = _DIRS_2[int(k)]
+            nr, nc = r + dr, c + dc
+            mr, mc = r + dr // 2, c + dc // 2
+            if not (0 <= nr < h and 0 <= nc < w):
+                continue
+            if owner[nr, nc] < 0 or owner[mr, mc] < 0:
+                continue
+            maze[mr, mc] = _CORRIDOR
+            maze[nr, nc] = _CORRIDOR
+            break
+
+    corridor = np.argwhere(maze == _CORRIDOR)
     order = rng.permutation(len(corridor))
     starts = [(int(corridor[i, 0]), int(corridor[i, 1])) for i in order]
 
-    remaining = budget
     for start in starts:
-        if remaining is not None and remaining <= 0:
-            break
-        stack: list[tuple[int, int]] = [start]
-        while stack and (remaining is None or remaining > 0):
+        stack = [start]
+        while stack:
             r, c = stack[-1]
-            dir_order = rng.permutation(4)
             advanced = False
-            for k in dir_order:
+            for k in rng.permutation(4):
                 dr, dc = _DIRS_2[int(k)]
                 nr, nc = r + dr, c + dc
                 mr, mc = r + dr // 2, c + dc // 2
@@ -251,12 +237,9 @@ def _carve_branches(
                     continue
                 if maze[nr, nc] == _CORRIDOR:
                     continue
-                delta = int(maze[mr, mc] != _CORRIDOR) + 1
                 maze[mr, mc] = _CORRIDOR
                 maze[nr, nc] = _CORRIDOR
                 stack.append((nr, nc))
-                if remaining is not None:
-                    remaining -= delta
                 advanced = True
                 break
             if not advanced:
@@ -268,27 +251,23 @@ def _render_image(
     cell_px: int,
     entrance: tuple[int, int],
     exit_: tuple[int, int],
-    extra_nodes: list[tuple[int, int]],
+    other_seeds: list[tuple[int, int]],
 ) -> Image.Image:
     h, w = maze.shape
     img = Image.new("RGB", (w * cell_px, h * cell_px), _C_WALL)
     draw = ImageDraw.Draw(img)
-
     for r in range(h):
         for c in range(w):
             if maze[r, c] == _CORRIDOR:
-                _fill_cell(draw, (r, c), cell_px, _C_CORRIDOR)
-
-    for cell in extra_nodes:
-        _fill_cell(draw, cell, cell_px, _C_NODE)
-    _fill_cell(draw, entrance, cell_px, _C_ENTRANCE)
-    _fill_cell(draw, exit_, cell_px, _C_EXIT)
-
-    draw.rectangle(
-        (0, 0, w * cell_px - 1, h * cell_px - 1),
-        outline=_C_BORDER,
-        width=2,
-    )
+                x0, y0 = c * cell_px, r * cell_px
+                draw.rectangle(
+                    [x0, y0, x0 + cell_px - 1, y0 + cell_px - 1], fill=_C_CORRIDOR
+                )
+    for r, c in other_seeds:
+        _paint_cell(draw, r, c, cell_px, _C_NODE)
+    _paint_cell(draw, entrance[0], entrance[1], cell_px, _C_ENTRANCE)
+    _paint_cell(draw, exit_[0], exit_[1], cell_px, _C_EXIT)
+    draw.rectangle([0, 0, w * cell_px - 1, h * cell_px - 1], outline=_C_BORDER, width=1)
 
     buf = BytesIO()
     img.save(buf, format="PNG")
@@ -296,15 +275,12 @@ def _render_image(
     return Image.open(buf).copy()
 
 
-def _fill_cell(
+def _paint_cell(
     draw: ImageDraw.ImageDraw,
-    cell: tuple[int, int],
+    r: int,
+    c: int,
     cell_px: int,
     color: tuple[int, int, int],
 ) -> None:
-    r, c = cell
     x0, y0 = c * cell_px, r * cell_px
-    draw.rectangle(
-        (x0, y0, x0 + cell_px - 1, y0 + cell_px - 1),
-        fill=color,
-    )
+    draw.rectangle([x0, y0, x0 + cell_px - 1, y0 + cell_px - 1], fill=color)
