@@ -8,7 +8,8 @@ from PIL import Image
 
 from ..base import BenchmarkTask
 from ..graph_sampling import coloring_graph
-from ..rendering import render_graph, render_map
+from ..rendering import build_map, render_graph
+from ..rendering.map_coloring import Map
 
 
 class ColoringTask(BenchmarkTask):
@@ -35,13 +36,11 @@ class ColoringTask(BenchmarkTask):
             "neighboring regions share the same color?\nA:"
         )
 
-    def render_disguise(
-        self, G: nx.Graph, seed: int, show_node_ids: bool = True
-    ) -> Image.Image:
+    def disguise(self, G: nx.Graph, seed: int) -> Map:
         pos = {n: G.nodes[n].get("pos") for n in G.nodes()}
         if all(p is not None for p in pos.values()):
-            return render_map(G, seed=seed, pos=pos, show_labels=show_node_ids)
-        return render_map(G, seed=seed, show_labels=show_node_ids)
+            return build_map(G, seed=seed, pos=pos, show_labels=True)
+        return build_map(G, seed=seed, show_labels=True)
 
 
 def _chromatic_number(G: nx.Graph) -> int:

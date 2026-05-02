@@ -20,18 +20,21 @@ def render_graph(
     G: nx.Graph,
     highlights: dict[int, str] | None = None,
     with_labels: bool = True,
+    arrowsize: int = 10,
 ) -> Image.Image:
     """Render *G* to a square PIL image using a spring layout.
 
     Parameters
     ----------
     G
-        NetworkX graph.
+        NetworkX graph. ``DiGraph`` instances are drawn with arrowheads.
     highlights
         Optional ``{node: color}`` mapping. Highlighted nodes are drawn in
         the given color; unhighlighted nodes use the default palette.
     with_labels
         Whether to draw numeric node labels.
+    arrowsize
+        Arrowhead size for directed graphs. Ignored for undirected.
     """
     highlights = highlights or {}
 
@@ -50,6 +53,7 @@ def render_graph(
         font_weight="bold",
         edge_color="#2C3E50",
         width=1.4,
+        arrowsize=arrowsize,
     )
     ax.set_axis_off()
 
@@ -66,7 +70,10 @@ def _layout(G: nx.Graph, seed: int = 42, gap: float = 0.25) -> dict:
     gap. Edges may cross between components, which is fine — the goal is to
     keep components visually close so the viewer can compare them at once.
     """
-    components = list(nx.connected_components(G))
+    components = list(
+        nx.weakly_connected_components(G) if G.is_directed()
+        else nx.connected_components(G)
+    )
     if len(components) <= 1:
         return nx.spring_layout(G, seed=seed)
 

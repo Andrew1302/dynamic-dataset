@@ -1,0 +1,54 @@
+"""Directed connectivity task paired with the directed maze disguise."""
+
+from __future__ import annotations
+
+import networkx as nx
+import numpy as np
+from PIL import Image
+
+from ..base import BenchmarkTask
+from ..graph_sampling import directed_connectivity_graph
+from ..rendering import build_directed_maze, render_graph
+from ..rendering.directed_maze import DirectedMaze
+
+
+class DirectedConnectivityTask(BenchmarkTask):
+    name = "directed_connectivity"
+
+    def sample_graph(self, rng: np.random.Generator, difficulty: str) -> nx.DiGraph:
+        G, entrance, exit_ = directed_connectivity_graph(rng, difficulty)
+        G.graph["entrance"] = entrance
+        G.graph["exit"] = exit_
+        return G
+
+    def solve(self, G: nx.DiGraph) -> str:
+        return "Yes" if nx.has_path(G, G.graph["entrance"], G.graph["exit"]) else "No"
+
+    def direct_prompt(self, G: nx.DiGraph) -> str:
+        u, v = G.graph["entrance"], G.graph["exit"]
+        return (
+            f"Q: Following the arrow directions, is there a directed path "
+            f"from node {u} to node {v}?\nA:"
+        )
+
+    def render_direct(self, G: nx.DiGraph) -> Image.Image:
+        highlights = {
+            G.graph["entrance"]: "#58CF76",
+            G.graph["exit"]: "#EB5E5E",
+        }
+        return render_graph(G, highlights=highlights, arrowsize=22)
+
+    def disguise_prompt(self) -> str:
+        return (
+            "Q: Each corridor passage in this maze has an arrow showing the "
+            "only allowed direction of travel. Following the arrows, is it "
+            "possible to travel from the green cell to the red cell?\nA:"
+        )
+
+    def disguise(self, G: nx.DiGraph, seed: int) -> DirectedMaze:
+        return build_directed_maze(
+            G,
+            seed=seed,
+            entrance=G.graph["entrance"],
+            exit=G.graph["exit"],
+        )
