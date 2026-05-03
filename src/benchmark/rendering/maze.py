@@ -108,7 +108,7 @@ def build_maze(
     rng = np.random.default_rng(seed)
     node_ids = list(G.nodes())
 
-    owner = _build_ownership_grid(
+    owner, _filler_id = _build_ownership_grid(
         G, positions, node_ids, H, W, step, block, edge_passable=_undirected_passable
     )
 
@@ -162,9 +162,14 @@ def _build_ownership_grid(
     step: int,
     block: int,
     edge_passable,
-) -> np.ndarray:
-    """Build the fine ownership grid. ``edge_passable(G, a, b)`` decides
-    whether the shared wall between two adjacent node blocks is open."""
+) -> tuple[np.ndarray, int]:
+    """Build the fine ownership grid.
+
+    ``edge_passable(G, a, b)`` decides whether the shared wall between two
+    adjacent node blocks is open. Returns ``(owner, filler_id)`` — the
+    sentinel value used for empty-slot cells so downstream code can
+    identify filler regions without reaching into this builder.
+    """
     fh = H * step + 1
     fw = W * step + 1
     node_idx = {n: i for i, n in enumerate(node_ids)}
@@ -210,7 +215,7 @@ def _build_ownership_grid(
             elif not a_node and not b_node:
                 owner[wall_r, c0 : c0 + block] = FILLER
 
-    return owner
+    return owner, FILLER
 
 
 def _place_seeds(

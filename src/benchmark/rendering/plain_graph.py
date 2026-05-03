@@ -15,6 +15,19 @@ from PIL import Image
 
 _DEFAULT_COLOR = "#AED6F1"
 
+# Node visual size. Kept small enough that a 15-node component fits in
+# the default figure without label overlap.
+_NODE_SIZE = 360
+_FONT_SIZE = 9
+
+# Minimum centre-to-centre distance between any two nodes after layout,
+# in unit-cube coords (layouts are normalised to roughly [-1, 1]). A
+# direct repel pass enforces this — bumping ``k`` in the spring layout
+# is ineffective because networkx rescales the result to a fixed box,
+# which collapses any extra spacing earned during iteration.
+_MIN_NODE_DIST = 0.18
+_REPEL_ITERATIONS = 40
+
 
 def render_graph(
     G: nx.Graph,
@@ -48,13 +61,14 @@ def render_graph(
         ax=ax,
         with_labels=with_labels,
         node_color=node_colors,
-        node_size=500,
-        font_size=10,
+        node_size=_NODE_SIZE,
+        font_size=_FONT_SIZE,
         font_weight="bold",
         edge_color="#2C3E50",
         width=1.4,
         arrowsize=arrowsize,
     )
+    ax.margins(0.08)
     ax.set_axis_off()
 
     buf = BytesIO()
@@ -64,29 +78,35 @@ def render_graph(
     return Image.open(buf).copy()
 
 
-def _layout(G: nx.Graph, seed: int = 42, gap: float = 0.25) -> dict:
-    """Spring layout for connected graphs; for disconnected graphs, lay out
-    each component independently and pack them side by side with a small
-    gap. Edges may cross between components, which is fine — the goal is to
-    keep components visually close so the viewer can compare them at once.
+def _layout(G: nx.Graph, seed: int = 42, gap: float = 0.6) -> dict:
+    """Layout for the direct view.
+
+    Single-component graphs use Kamada-Kawai, which spreads nodes more
+    uniformly than spring layout for small tree-ish graphs. Disconnected
+    graphs lay out each component independently and pack them side by
+    side with a fixed gap. Edges may cross between components, which is
+    fine — the goal is to keep components visually close so the viewer
+    can compare them at once.
     """
     components = list(
         nx.weakly_connected_components(G) if G.is_directed()
         else nx.connected_components(G)
     )
     if len(components) <= 1:
-        return nx.spring_layout(G, seed=seed)
+        return _component_layout(G, seed)
 
     components.sort(key=len, reverse=True)
     sublayouts: list[tuple[dict, float, float]] = []
     for comp in components:
         H = G.subgraph(comp)
-        sub = nx.spring_layout(H, seed=seed)
+        sub = _component_layout(H, seed)
         xs = np.array([p[0] for p in sub.values()])
         ys = np.array([p[1] for p in sub.values()])
         cx, cy = float(xs.mean()), float(ys.mean())
-        width = max(float(xs.max() - xs.min()), 0.2)
-        height = max(float(ys.max() - ys.min()), 0.2)
+        # Floor on width/height keeps singleton and 2-node components from
+        # stacking on top of their neighbours when packed side-by-side.
+        width = max(float(xs.max() - xs.min()), 0.8)
+        height = max(float(ys.max() - ys.min()), 0.8)
         sub = {n: (float(p[0]) - cx, float(p[1]) - cy) for n, p in sub.items()}
         sublayouts.append((sub, width, height))
 
@@ -99,3 +119,47 @@ def _layout(G: nx.Graph, seed: int = 42, gap: float = 0.25) -> dict:
             pos[n] = np.array([x_cursor + x, y])
         x_cursor += half_w + gap
     return pos
+
+
+def _component_layout(H: nx.Graph, seed: int) -> dict:
+    """Per-component layout. Kamada-Kawai gives uniform spacing for
+    most small graphs but occasionally collapses graph-equivalent
+    nodes onto the same point. A direct repel pass enforces a minimum
+    pairwise distance after layout."""
+    if len(H) < 2:
+        return nx.spring_layout(H, seed=seed)
+    try:
+        pos = nx.kamada_kawai_layout(H)
+    except (nx.NetworkXError, ValueError):
+        pos = nx.spring_layout(H, seed=seed)
+    return _repel_overlaps(pos)
+
+
+def _repel_overlaps(pos: dict) -> dict:
+    """Iteratively push pairs of nodes apart until every pair sits at
+    least ``_MIN_NODE_DIST`` apart. Coordinates are 2D numpy arrays."""
+    if not pos:
+        return pos
+    nodes = list(pos.keys())
+    arr = np.array([pos[n] for n in nodes], dtype=float)
+    rng = np.random.default_rng(0)
+    for _ in range(_REPEL_ITERATIONS):
+        moved = False
+        for i in range(len(nodes)):
+            for j in range(i + 1, len(nodes)):
+                delta = arr[j] - arr[i]
+                dist = float(np.linalg.norm(delta))
+                if dist >= _MIN_NODE_DIST:
+                    continue
+                if dist < 1e-9:
+                    # Same point: pick a deterministic-ish random axis.
+                    delta = rng.normal(size=2)
+                    dist = float(np.linalg.norm(delta))
+                direction = delta / dist
+                push = (_MIN_NODE_DIST - dist) / 2 + 1e-3
+                arr[i] -= direction * push
+                arr[j] += direction * push
+                moved = True
+        if not moved:
+            break
+    return {n: arr[i] for i, n in enumerate(nodes)}
