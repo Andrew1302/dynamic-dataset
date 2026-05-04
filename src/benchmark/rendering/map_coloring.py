@@ -12,20 +12,42 @@ adjacent in G (exact adjacency, by construction).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import networkx as nx
 from PIL import Image
 
 from ._planar_map import render_planar_map
 
 
-def render_map(
+@dataclass(frozen=True)
+class Map:
+    """Graph rendered as a map. Result of ``build_map``."""
+
+    G: nx.Graph
+    pos: dict
+    show_labels: bool = False
+
+    def render(self) -> Image.Image:
+        return render_planar_map(self.G, self.pos, show_labels=self.show_labels)
+
+
+def build_map(
     G: nx.Graph,
     seed: int = 42,  # retained for API compatibility; unused
     show_labels: bool = False,
     pos: dict | None = None,
-) -> Image.Image:
-    """Render *G* as a black-and-white map. Requires each node in ``G`` to
-    carry a ``pos`` attribute or ``pos`` to be passed in explicitly."""
+) -> Map:
     if pos is None:
         pos = {n: G.nodes[n]["pos"] for n in G.nodes()}
-    return render_planar_map(G, pos, show_labels=show_labels)
+    return Map(G=G, pos=pos, show_labels=show_labels)
+
+
+def render_map(
+    G: nx.Graph,
+    seed: int = 42,
+    show_labels: bool = False,
+    pos: dict | None = None,
+) -> Image.Image:
+    """Convenience: ``build_map(...).render()``."""
+    return build_map(G, seed=seed, show_labels=show_labels, pos=pos).render()

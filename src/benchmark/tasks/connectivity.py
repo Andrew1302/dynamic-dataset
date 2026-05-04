@@ -8,10 +8,8 @@ from PIL import Image
 
 from ..base import BenchmarkTask
 from ..graph_sampling import connectivity_graph
-from ..rendering import render_graph, render_maze
-
-
-_DIRECT_HIGHLIGHTS = {"_entrance_color": "#58CF76", "_exit_color": "#EB5E5E"}
+from ..rendering import build_maze, render_graph
+from ..rendering.maze import Maze
 
 
 class ConnectivityTask(BenchmarkTask):
@@ -33,8 +31,8 @@ class ConnectivityTask(BenchmarkTask):
 
     def render_direct(self, G: nx.Graph) -> Image.Image:
         highlights = {
-            G.graph["entrance"]: _DIRECT_HIGHLIGHTS["_entrance_color"],
-            G.graph["exit"]: _DIRECT_HIGHLIGHTS["_exit_color"],
+            G.graph["entrance"]: "#58CF76",
+            G.graph["exit"]: "#EB5E5E",
         }
         return render_graph(G, highlights=highlights)
 
@@ -44,8 +42,8 @@ class ConnectivityTask(BenchmarkTask):
             "through the corridors of this maze?\nA:"
         )
 
-    def render_disguise(self, G: nx.Graph, seed: int) -> Image.Image:
-        return render_maze(
+    def disguise(self, G: nx.Graph, seed: int) -> Maze:
+        return build_maze(
             G,
             seed=seed,
             entrance=G.graph["entrance"],

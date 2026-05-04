@@ -1,18 +1,16 @@
 """Core abstractions for the graph-disguise benchmark.
 
-A ``BenchmarkTask`` pairs a graph-theoretic question with exactly one
-visual disguise. Each call to :py:meth:`BenchmarkTask.generate` draws a
-fresh random graph and returns five artifacts: a direct prompt, a direct
-graph image, a disguise prompt, a disguise image, and the shared
-ground-truth answer.
+Each ``BenchmarkTask`` exposes four extension points: graph generation,
+direct prompt + image, disguise transformation (``G → Disguise``), and
+the disguise's prompt + image (rendered by ``Disguise.render()``).
 
 Subclasses register themselves automatically via ``__init_subclass__``
-as long as they set the ``name`` class attribute.
+when they set the ``name`` class attribute.
 """
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, TypedDict
+from typing import Any, ClassVar, Protocol, TypedDict, runtime_checkable
 
 import networkx as nx
 import numpy as np
@@ -27,11 +25,17 @@ class Sample(TypedDict):
     answer: str
 
 
+@runtime_checkable
+class Disguise(Protocol):
+    """Anything that knows how to draw itself into a PIL image."""
+
+    def render(self) -> Image.Image: ...
+
+
 _registry: dict[str, type["BenchmarkTask"]] = {}
 
 
 def get_all_tasks() -> dict[str, type["BenchmarkTask"]]:
-    """Return a copy of the task registry."""
     return dict(_registry)
 
 
@@ -66,7 +70,7 @@ class BenchmarkTask:
     def disguise_prompt(self) -> str:
         raise NotImplementedError
 
-    def render_disguise(self, G: nx.Graph, seed: int) -> Image.Image:
+    def disguise(self, G: nx.Graph, seed: int) -> Disguise:
         raise NotImplementedError
 
     # --- concrete entry point ------------------------------------------------
@@ -78,6 +82,6 @@ class BenchmarkTask:
             "direct_prompt": self.direct_prompt(G),
             "direct_image": self.render_direct(G),
             "disguise_prompt": self.disguise_prompt(),
-            "disguise_image": self.render_disguise(G, seed),
+            "disguise_image": self.disguise(G, seed).render(),
             "answer": self.solve(G),
         }

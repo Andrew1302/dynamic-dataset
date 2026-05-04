@@ -120,6 +120,84 @@ def _disconnected_lattice_pair(
     return G, int(u), int(v)
 
 
+def directed_connectivity_graph(
+    rng: np.random.Generator,
+    difficulty: str,
+) -> tuple[nx.DiGraph, int, int]:
+    """Return ``(D, entrance, exit)`` for the directed connectivity task.
+
+    A single connected lattice blob is grown, sparsified, and randomly
+    oriented (one direction per edge). Endpoints are chosen so the
+    answer is balanced 50/50 between reachable (Yes) and unreachable
+    (No) under directed reachability — no two-blob hack needed.
+    """
+    H, W = _CONNECTIVITY_LATTICE[difficulty]
+    fill_lo, fill_hi = _CONNECTIVITY_FILL[difficulty]
+    want_yes = bool(rng.integers(0, 2))
+    allowed = [(r, c) for r in range(H) for c in range(W)]
+
+    D: nx.DiGraph | None = None
+    for _ in range(32):
+        fill = float(rng.uniform(fill_lo, fill_hi))
+        n_target = max(3, min(int(round(H * W * fill)), H * W))
+        blob = _grow_lattice_blob(rng, allowed, n_target)
+        U = _sparsify_lattice(_lattice_subgraph(blob), rng)
+        D = _orient_edges(U, rng)
+        pick = _pick_directed_endpoints(D, rng, want_yes)
+        if pick is not None:
+            return D, pick[0], pick[1]
+
+    # Fallback: with a connected blob of size ≥ 3 a graph almost always has
+    # at least one directed pair on each side, but flipping want_yes lets
+    # us return the last sample without retrying graph generation again.
+    assert D is not None
+    pick = _pick_directed_endpoints(D, rng, not want_yes)
+    assert pick is not None
+    return D, pick[0], pick[1]
+
+
+def _orient_edges(U: nx.Graph, rng: np.random.Generator) -> nx.DiGraph:
+    """One random direction per undirected edge. Carries node attrs over."""
+    D = nx.DiGraph()
+    for n, data in U.nodes(data=True):
+        D.add_node(n, **data)
+    for u, v in U.edges():
+        if int(rng.integers(0, 2)):
+            D.add_edge(u, v)
+        else:
+            D.add_edge(v, u)
+    return D
+
+
+def _pick_directed_endpoints(
+    D: nx.DiGraph, rng: np.random.Generator, want_yes: bool
+) -> tuple[int, int] | None:
+    """Pick a balanced (entrance, exit) pair. Excludes lattice-adjacent
+    pairs (direct edge in either direction) so the visual puzzle isn't
+    trivialised by entrance and exit sitting one room apart.
+
+    Walks every ``u`` in a shuffled order before giving up — returning
+    ``None`` means no valid pair exists in ``D`` for this ``want_yes``
+    polarity, not that we got unlucky. Candidates are filtered by
+    iterating ``nodes`` (insertion-ordered) rather than the descendants
+    set, so the random pick doesn't depend on Python set iteration order.
+    """
+    nodes = list(D.nodes())
+    order = rng.permutation(len(nodes))
+    for i in order:
+        u = nodes[int(i)]
+        reach = nx.descendants(D, u)
+        if want_yes:
+            cand = [n for n in nodes if n in reach]
+        else:
+            cand = [n for n in nodes if n != u and n not in reach]
+        cand = [n for n in cand if not (D.has_edge(u, n) or D.has_edge(n, u))]
+        if cand:
+            v = cand[int(rng.integers(0, len(cand)))]
+            return int(u), int(v)
+    return None
+
+
 def _grow_lattice_blob(
     rng: np.random.Generator,
     allowed: list[tuple[int, int]],
