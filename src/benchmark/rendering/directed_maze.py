@@ -235,19 +235,11 @@ def _carve_block_decoys(
     """Recursive-backtracker dead-end branches inside each occupied block.
 
     The carver advances by 2-step jumps from the seed, restricted to
-    cells owned by the same node and avoiding cells already on an arm.
-    Because seed coords are odd-odd in fine grid and 2-step jumps
-    preserve parity, every carved cell sits at (odd, odd), (even, odd)
-    or (odd, even); cells at (even, even) are never carved. Arm cells
-    on the seed's row/column include both parities, but a parity check
-    shows no decoy cell ever ends up 4-adjacent to an arm cell other
-    than at the seed itself — the seed's east/west arm neighbours are
-    at (odd, even) and (odd, odd), already corridor and skipped by the
-    landing-is-corridor guard, while any non-seed arm cell at (cr, k)
-    has decoy adjacencies only at (cr±1, k) which are (even, odd) or
-    (even, even) and never carved. The seed-as-junction invariant is
-    therefore preserved, and decoys remain dead-end branches that
-    can't influence directed reachability between labelled cells.
+    cells owned by the same node. Both the midpoint and the landing must
+    be uncarved before a step is taken — without the midpoint guard a
+    decoy could carve through a pre-existing arm cell and create a new
+    corridor junction off the seed, breaking the seed-as-only-junction
+    invariant the arrow pipeline depends on.
     """
     h, w = maze.shape
     for n, root in seeds.items():
@@ -264,7 +256,7 @@ def _carve_block_decoys(
                     continue
                 if owner[nr, nc] != nid or owner[mr, mc] != nid:
                     continue
-                if maze[nr, nc] == _CORRIDOR:
+                if maze[nr, nc] == _CORRIDOR or maze[mr, mc] == _CORRIDOR:
                     continue
                 maze[mr, mc] = _CORRIDOR
                 maze[nr, nc] = _CORRIDOR

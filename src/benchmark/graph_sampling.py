@@ -174,13 +174,21 @@ def _pick_directed_endpoints(
 ) -> tuple[int, int] | None:
     """Pick a balanced (entrance, exit) pair. Excludes lattice-adjacent
     pairs (direct edge in either direction) so the visual puzzle isn't
-    trivialised by entrance and exit sitting one room apart."""
+    trivialised by entrance and exit sitting one room apart.
+
+    Walks every ``u`` in a shuffled order before giving up — returning
+    ``None`` means no valid pair exists in ``D`` for this ``want_yes``
+    polarity, not that we got unlucky. Candidates are filtered by
+    iterating ``nodes`` (insertion-ordered) rather than the descendants
+    set, so the random pick doesn't depend on Python set iteration order.
+    """
     nodes = list(D.nodes())
-    for _ in range(8):
-        u = nodes[int(rng.integers(0, len(nodes)))]
+    order = rng.permutation(len(nodes))
+    for i in order:
+        u = nodes[int(i)]
         reach = nx.descendants(D, u)
         if want_yes:
-            cand = list(reach)
+            cand = [n for n in nodes if n in reach]
         else:
             cand = [n for n in nodes if n != u and n not in reach]
         cand = [n for n in cand if not (D.has_edge(u, n) or D.has_edge(n, u))]

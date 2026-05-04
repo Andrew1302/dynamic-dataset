@@ -35,7 +35,11 @@ def render_graph(
     with_labels: bool = True,
     arrowsize: int = 10,
 ) -> Image.Image:
-    """Render *G* to a square PIL image using a spring layout.
+    """Render *G* to a square PIL image.
+
+    Single-component graphs use Kamada–Kawai with a repel pass that
+    enforces a minimum pairwise node distance; disconnected graphs are
+    laid out per-component and packed side-by-side (see ``_layout``).
 
     Parameters
     ----------
