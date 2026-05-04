@@ -153,6 +153,23 @@ def _undirected_passable(G: nx.Graph, a: int, b: int) -> bool:
     return G.has_edge(a, b)
 
 
+def _pick_axis_offsets(
+    H: int, W: int, block: int, rng: np.random.Generator
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per-row and per-column even offsets used for aligned seed placement.
+
+    All blocks in lattice row ``lr`` share the same fine-grid row
+    ``1 + lr*step + row_off[lr]``; same for columns. With this alignment
+    the corridor crossing any passable wall is a single straight line on
+    a fixed fine row (vertical walls) or column (horizontal walls), and
+    the seed becomes the only branching point inside each block.
+    """
+    offsets = np.arange(0, block, 2, dtype=np.int32)
+    row_off = offsets[rng.integers(0, len(offsets), size=H)]
+    col_off = offsets[rng.integers(0, len(offsets), size=W)]
+    return row_off, col_off
+
+
 def _build_ownership_grid(
     G: nx.Graph,
     positions: dict[int, tuple[int, int]],
@@ -162,6 +179,8 @@ def _build_ownership_grid(
     step: int,
     block: int,
     edge_passable,
+    row_off: np.ndarray | None = None,
+    col_off: np.ndarray | None = None,
 ) -> tuple[np.ndarray, int]:
     """Build the fine ownership grid.
 
@@ -169,12 +188,20 @@ def _build_ownership_grid(
     adjacent node blocks is open. Returns ``(owner, filler_id)`` — the
     sentinel value used for empty-slot cells so downstream code can
     identify filler regions without reaching into this builder.
+
+    When ``row_off`` and ``col_off`` are provided, each passable
+    node↔node wall opens at exactly **one** aligned cell instead of the
+    full block-length stripe. This is the precondition for the
+    seed-as-junction invariant used by the directed maze: a single
+    crossing per edge means each in-block stroke contains the wall cell
+    and gets a non-tied direction vote.
     """
     fh = H * step + 1
     fw = W * step + 1
     node_idx = {n: i for i, n in enumerate(node_ids)}
     pos_to_node = {positions[n]: n for n in node_ids}
     FILLER = len(node_ids)
+    aligned = row_off is not None and col_off is not None
 
     owner = np.full((fh, fw), -1, dtype=np.int32)
 
@@ -197,7 +224,10 @@ def _build_ownership_grid(
             if a_node and b_node:
                 a, b = pos_to_node[pa], pos_to_node[pb]
                 if edge_passable(G, a, b):
-                    owner[r0 : r0 + block, wall_c] = node_idx[a]
+                    if aligned:
+                        owner[r0 + int(row_off[lr]), wall_c] = node_idx[a]
+                    else:
+                        owner[r0 : r0 + block, wall_c] = node_idx[a]
             elif not a_node and not b_node:
                 owner[r0 : r0 + block, wall_c] = FILLER
 
@@ -211,7 +241,10 @@ def _build_ownership_grid(
             if a_node and b_node:
                 a, b = pos_to_node[pa], pos_to_node[pb]
                 if edge_passable(G, a, b):
-                    owner[wall_r, c0 : c0 + block] = node_idx[a]
+                    if aligned:
+                        owner[wall_r, c0 + int(col_off[lc])] = node_idx[a]
+                    else:
+                        owner[wall_r, c0 : c0 + block] = node_idx[a]
             elif not a_node and not b_node:
                 owner[wall_r, c0 : c0 + block] = FILLER
 
@@ -225,18 +258,35 @@ def _place_seeds(
     step: int,
     block: int,
     rng: np.random.Generator,
+    row_off: np.ndarray | None = None,
+    col_off: np.ndarray | None = None,
 ) -> tuple[dict[int, tuple[int, int]], list[tuple[int, int]]]:
     """One node seed per occupied lattice cell, one filler seed per empty
-    cell, both at random even-offsets so endpoints aren't always centered."""
+    cell.
+
+    When ``row_off``/``col_off`` are supplied, node seeds use those
+    aligned offsets so adjacent blocks share a fine row (vertical walls)
+    or column (horizontal walls) — a corridor crossing the wall is then
+    a straight line directly into both seeds. Without them, offsets are
+    random per-block (legacy behaviour).
+
+    Filler seeds are always random — filler regions are isolated from
+    node regions by hard walls, so their positions don't need to align.
+    """
     offsets = list(range(0, block, 2))
     pos_to_node = {p: n for n, p in positions.items()}
+    aligned = row_off is not None and col_off is not None
 
     seeds: dict[int, tuple[int, int]] = {}
     for n, (lr, lc) in positions.items():
         r0 = 1 + lr * step
         c0 = 1 + lc * step
-        dr = offsets[int(rng.integers(0, len(offsets)))]
-        dc = offsets[int(rng.integers(0, len(offsets)))]
+        if aligned:
+            dr = int(row_off[lr])
+            dc = int(col_off[lc])
+        else:
+            dr = offsets[int(rng.integers(0, len(offsets)))]
+            dc = offsets[int(rng.integers(0, len(offsets)))]
         seeds[n] = (r0 + dr, c0 + dc)
 
     filler_seeds: list[tuple[int, int]] = []

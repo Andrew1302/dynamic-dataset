@@ -1,25 +1,27 @@
-"""Directed maze disguise: tree-shaped node carving + braided filler.
+"""Directed maze disguise: seed-as-junction node carving + braided filler.
 
-Node-owned regions are carved as recursive-backtracker spanning trees
-(one per ownership component). This keeps every passage exactly one
-cell wide, which is what the arrow voting algorithm relies on:
-each *stroke* — a maximal corridor path of degree-2 cells — has a
-single, well-defined axis along which we can place direction arrows.
+Node-owned regions are carved by drilling **straight arms** from each
+node's seed cell to the unique passable wall cell on every side that
+has an outgoing or incoming edge (see ``_carve_node_arms``). The seed
+is therefore the only cell of corridor-degree ≥ 3 inside any node
+block — every other in-block corridor cell is degree-2 and lies on a
+single stroke whose body crosses the wall cell of the matching edge.
 
-Filler regions are carved the same way, then **braided**: short loops
-are closed by carving a second connection to a nearby corridor, which
-visibly cuts down the "spanning-tree leaves everywhere" look. Filler
-regions are isolated from node regions by hard walls (`-1` in the
-ownership grid), so braiding can never create a corridor path between
-graph nodes that wasn't already in *G* — directed reachability is
-preserved by construction.
+Why the seed-as-junction invariant matters: the arrow pipeline votes
+each stroke's direction from the wall-cell directions in its body
+(``_compute_wall_directions`` sets one direction per passable wall).
+With the seed as the only junction, every node-block stroke contains
+exactly one wall cell and gets a decisive forward-vs-backward vote —
+the tie-breaker that previously mis-oriented internal strokes when
+the seed was a tree-leaf is never exercised. End-to-end directed
+reachability between any two node seeds in the rendered maze matches
+``nx.has_path(G, u, v)`` by construction.
 
-Direction information rides on light-gray arrows. Each stroke gets one
-overall orientation, voted on by the cells lying on shared walls
-between adjacent blocks: a graph-edge wall contributes the edge
-direction; a filler↔filler wall contributes a random axis sign per
-wall. Pure cycles (only possible inside braided filler regions) get
-their orientation chosen randomly — they don't affect correctness.
+Filler regions (empty lattice slots) are still carved with the
+recursive-backtracker spanning-tree carver and then **braided** to
+close some short loops. Filler is isolated from node regions by hard
+walls (``-1`` in the ownership grid), so it cannot leak directed
+reachability.
 """
 
 from __future__ import annotations
@@ -43,6 +45,7 @@ from .maze import (
     _WALL,
     _build_ownership_grid,
     _paint_cell,
+    _pick_axis_offsets,
     _place_seeds,
 )
 
@@ -125,7 +128,15 @@ def build_directed_maze(
     highlight_all_nodes: bool = True,
 ) -> DirectedMaze:
     """Carve a directed maze. Topology mirrors the underlying undirected
-    adjacency; arrows encode direction."""
+    adjacency; arrows encode direction.
+
+    Node blocks: seed-as-junction carving (``_carve_node_arms``) — the
+    seed is the only branching point, with one straight corridor arm
+    per incident edge running to the aligned wall cell.
+
+    Filler regions: spanning-tree forest + light braiding, isolated
+    from node regions by hard walls.
+    """
     positions = {n: G.nodes[n]["lattice"] for n in G.nodes()}
     H = max(p[0] for p in positions.values()) + 1
     W = max(p[1] for p in positions.values()) + 1
@@ -133,24 +144,33 @@ def build_directed_maze(
     step = block + 1
     rng = np.random.default_rng(seed)
     node_ids = list(G.nodes())
+    node_idx = {n: i for i, n in enumerate(node_ids)}
+
+    row_off, col_off = _pick_axis_offsets(H, W, block, rng)
 
     owner, filler_id = _build_ownership_grid(
         G, positions, node_ids, H, W, step, block,
         edge_passable=_directed_passable,
+        row_off=row_off, col_off=col_off,
     )
 
-    seeds, filler_seeds = _place_seeds(positions, H, W, step, block, rng)
+    seeds, filler_seeds = _place_seeds(
+        positions, H, W, step, block, rng,
+        row_off=row_off, col_off=col_off,
+    )
 
     fh = H * step + 1
     fw = W * step + 1
     maze = np.full((fh, fw), _WALL, dtype=np.uint8)
 
-    all_seeds = list(seeds.values()) + filler_seeds
-    _carve_tree_forest(maze, owner, rng, all_seeds)
+    _carve_node_arms(maze, owner, seeds, positions, H, W, step)
+    _carve_block_decoys(maze, owner, rng, seeds, node_idx)
+    _carve_tree_forest(maze, owner, rng, filler_seeds)
     _braid_filler(maze, owner, rng, filler_id, set(filler_seeds))
 
     wall_dirs = _compute_wall_directions(G, positions, H, W, step, rng)
     node_seeds = set(seeds.values())
+    all_seeds = list(seeds.values()) + filler_seeds
     arrows = _compute_arrows(maze, all_seeds, node_seeds, wall_dirs, rng)
 
     return DirectedMaze(
@@ -162,6 +182,97 @@ def build_directed_maze(
         cell_px=cell_px,
         highlight_all_nodes=highlight_all_nodes,
     )
+
+
+def _carve_node_arms(
+    maze: np.ndarray,
+    owner: np.ndarray,
+    seeds: dict[int, Cell],
+    positions: dict[int, Cell],
+    H: int,
+    W: int,
+    step: int,
+) -> None:
+    """For every occupied lattice block, drill a straight 1-cell-wide
+    corridor from the node's seed to the unique passable wall cell on
+    each side that has an incident edge.
+
+    The aligned ownership grid guarantees that each passable wall has a
+    single passable cell on the same fine row (vertical walls) or column
+    (horizontal walls) as the two adjacent seeds, so each arm is a pure
+    horizontal or vertical line — no bends, no junctions other than the
+    seed itself.
+    """
+    for n, (lr, lc) in positions.items():
+        cr, cc = seeds[n]
+        maze[cr, cc] = _CORRIDOR
+
+        if lc > 0:
+            wall_c = lc * step
+            if owner[cr, wall_c] >= 0:
+                maze[cr, wall_c : cc + 1] = _CORRIDOR
+        if lc < W - 1:
+            wall_c = (lc + 1) * step
+            if owner[cr, wall_c] >= 0:
+                maze[cr, cc : wall_c + 1] = _CORRIDOR
+        if lr > 0:
+            wall_r = lr * step
+            if owner[wall_r, cc] >= 0:
+                maze[wall_r : cr + 1, cc] = _CORRIDOR
+        if lr < H - 1:
+            wall_r = (lr + 1) * step
+            if owner[wall_r, cc] >= 0:
+                maze[cr : wall_r + 1, cc] = _CORRIDOR
+
+
+def _carve_block_decoys(
+    maze: np.ndarray,
+    owner: np.ndarray,
+    rng: np.random.Generator,
+    seeds: dict[int, Cell],
+    node_idx: dict[int, int],
+) -> None:
+    """Recursive-backtracker dead-end branches inside each occupied block.
+
+    The carver advances by 2-step jumps from the seed, restricted to
+    cells owned by the same node and avoiding cells already on an arm.
+    Because seed coords are odd-odd in fine grid and 2-step jumps
+    preserve parity, every carved cell sits at (odd, odd), (even, odd)
+    or (odd, even); cells at (even, even) are never carved. Arm cells
+    on the seed's row/column include both parities, but a parity check
+    shows no decoy cell ever ends up 4-adjacent to an arm cell other
+    than at the seed itself — the seed's east/west arm neighbours are
+    at (odd, even) and (odd, odd), already corridor and skipped by the
+    landing-is-corridor guard, while any non-seed arm cell at (cr, k)
+    has decoy adjacencies only at (cr±1, k) which are (even, odd) or
+    (even, even) and never carved. The seed-as-junction invariant is
+    therefore preserved, and decoys remain dead-end branches that
+    can't influence directed reachability between labelled cells.
+    """
+    h, w = maze.shape
+    for n, root in seeds.items():
+        nid = node_idx[n]
+        stack = [root]
+        while stack:
+            r, c = stack[-1]
+            advanced = False
+            for k in rng.permutation(4):
+                dr, dc = _DIRS_2[int(k)]
+                nr, nc = r + dr, c + dc
+                mr, mc = r + dr // 2, c + dc // 2
+                if not (0 <= nr < h and 0 <= nc < w):
+                    continue
+                if owner[nr, nc] != nid or owner[mr, mc] != nid:
+                    continue
+                if maze[nr, nc] == _CORRIDOR:
+                    continue
+                maze[mr, mc] = _CORRIDOR
+                maze[nr, nc] = _CORRIDOR
+                stack.append((nr, nc))
+                advanced = True
+                break
+            if not advanced:
+                stack.pop()
 
 
 def render_directed_maze(
