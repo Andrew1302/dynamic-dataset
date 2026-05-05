@@ -45,6 +45,15 @@ _COLORING_SIZES: dict[str, tuple[int, int]] = {
     "hard": (11, 14),
 }
 
+_SHORTEST_PATH_SIZES: dict[str, tuple[int, int]] = {
+    "easy": (5, 7),
+    "medium": (8, 10),
+    "hard": (11, 14),
+}
+_SHORTEST_PATH_P = 0.18
+_SHORTEST_PATH_WEIGHT = (1, 10)
+_SHORTEST_PATH_MAX_ATTEMPTS = 200
+
 
 _NBRS = ((-1, 0), (1, 0), (0, -1), (0, 1))
 
@@ -295,6 +304,76 @@ def _random_spanning_tree(
             parent[pu] = pv
             tree.append((u, v))
     return tree, extras
+
+
+def shortest_path_graph(
+    rng: np.random.Generator,
+    difficulty: str,
+) -> nx.DiGraph:
+    """Return a weighted DAG for the shortest-path task.
+
+    Vertices are 0..n-1, edges only run i→j with i<j (so the graph is
+    automatically acyclic). Vertex 0 is the unique source (in-degree 0)
+    and vertex n-1 is the unique sink (out-degree 0); both are forced
+    by an orphan-fix step rather than rejection sampling because the
+    accept rate of the pure ER recipe collapses for n ≥ 15. Each edge
+    carries an integer ``weight`` in [1, 10]. The graph admits at least
+    two distinct simple s→t paths, which keeps the task non-trivial.
+
+    ``G.graph["source"]`` and ``G.graph["sink"]`` carry the endpoints.
+    """
+    lo, hi = _SHORTEST_PATH_SIZES[difficulty]
+    w_lo, w_hi = _SHORTEST_PATH_WEIGHT
+
+    for _ in range(_SHORTEST_PATH_MAX_ATTEMPTS):
+        n = int(rng.integers(lo, hi + 1))
+        edge_set: set[tuple[int, int]] = set()
+
+        for i in range(n):
+            for j in range(i + 1, n):
+                if rng.random() < _SHORTEST_PATH_P:
+                    edge_set.add((i, j))
+
+        # Force vertex 0 to be the only source.
+        for v in range(1, n):
+            if not any((u, v) in edge_set for u in range(v)):
+                edge_set.add((int(rng.integers(0, v)), v))
+
+        # Force vertex n-1 to be the only sink.
+        for v in range(n - 1):
+            if not any((v, w) in edge_set for w in range(v + 1, n)):
+                edge_set.add((v, int(rng.integers(v + 1, n))))
+
+        G = nx.DiGraph()
+        G.add_nodes_from(range(n))
+        for u, v in edge_set:
+            G.add_edge(u, v, weight=int(rng.integers(w_lo, w_hi + 1)))
+
+        s, t = 0, n - 1
+
+        # By construction; assert as a tripwire.
+        if any(G.in_degree(v) == 0 for v in range(1, n)):
+            continue
+        if any(G.out_degree(v) == 0 for v in range(n - 1)):
+            continue
+
+        try:
+            nx.shortest_path_length(G, s, t, weight="weight")
+        except nx.NetworkXNoPath:
+            continue
+
+        paths = nx.all_simple_paths(G, s, t)
+        if next(paths, None) is None or next(paths, None) is None:
+            continue
+
+        G.graph["source"] = s
+        G.graph["sink"] = t
+        return G
+
+    raise RuntimeError(
+        f"shortest_path_graph: no valid instance after "
+        f"{_SHORTEST_PATH_MAX_ATTEMPTS} attempts for difficulty={difficulty!r}"
+    )
 
 
 def coloring_graph(rng: np.random.Generator, difficulty: str) -> nx.Graph:

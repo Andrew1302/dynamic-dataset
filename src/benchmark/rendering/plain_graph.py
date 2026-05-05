@@ -25,8 +25,19 @@ _FONT_SIZE = 9
 # direct repel pass enforces this — bumping ``k`` in the spring layout
 # is ineffective because networkx rescales the result to a fixed box,
 # which collapses any extra spacing earned during iteration.
+#
+# Weighted graphs need extra room because each edge carries a label
+# whose bounding box would collide with neighbours at the default
+# spacing.
 _MIN_NODE_DIST = 0.18
-_REPEL_ITERATIONS = 40
+_MIN_NODE_DIST_WEIGHTED = 0.34
+_REPEL_ITERATIONS = 60
+
+# Per-mode figure size. Weighted graphs use a larger canvas so the
+# extra inter-node room translates into actual on-screen pixels rather
+# than being scaled away.
+_FIGSIZE = (6, 6)
+_FIGSIZE_WEIGHTED = (9, 9)
 
 
 def render_graph(
@@ -34,6 +45,7 @@ def render_graph(
     highlights: dict[int, str] | None = None,
     with_labels: bool = True,
     arrowsize: int = 10,
+    weighted: bool = False,
 ) -> Image.Image:
     """Render *G* to a square PIL image.
 
@@ -52,27 +64,67 @@ def render_graph(
         Whether to draw numeric node labels.
     arrowsize
         Arrowhead size for directed graphs. Ignored for undirected.
+    weighted
+        If ``True``, draw the integer ``weight`` attribute as a label on
+        each edge. Edges without a ``weight`` attribute are skipped.
     """
     highlights = highlights or {}
 
-    pos = _layout(G)
+    min_dist = _MIN_NODE_DIST_WEIGHTED if weighted else _MIN_NODE_DIST
+    figsize = _FIGSIZE_WEIGHTED if weighted else _FIGSIZE
+
+    pos = _layout(G, min_dist=min_dist)
     node_colors = [highlights.get(n, _DEFAULT_COLOR) for n in G.nodes()]
 
-    fig, ax = plt.subplots(figsize=(6, 6))
-    nx.draw(
-        G,
-        pos,
-        ax=ax,
-        with_labels=with_labels,
-        node_color=node_colors,
-        node_size=_NODE_SIZE,
-        font_size=_FONT_SIZE,
-        font_weight="bold",
-        edge_color="#2C3E50",
-        width=1.4,
-        arrowsize=arrowsize,
-    )
-    ax.margins(0.08)
+    fig, ax = plt.subplots(figsize=figsize)
+    if weighted:
+        # Curved edges spread the per-edge midpoints apart, so weight
+        # labels stop piling on top of each other where edges fan in or
+        # cross close to a shared midpoint.
+        nx.draw_networkx_nodes(
+            G, pos, ax=ax,
+            node_color=node_colors, node_size=_NODE_SIZE,
+        )
+        if with_labels:
+            nx.draw_networkx_labels(
+                G, pos, ax=ax,
+                font_size=_FONT_SIZE, font_weight="bold",
+            )
+        nx.draw_networkx_edges(
+            G, pos, ax=ax,
+            edge_color="#2C3E50", width=1.4,
+            arrowsize=arrowsize,
+            connectionstyle="arc3,rad=0.12",
+            node_size=_NODE_SIZE,
+        )
+        edge_labels = {
+            (u, v): str(d["weight"])
+            for u, v, d in G.edges(data=True)
+            if "weight" in d
+        }
+        if edge_labels:
+            nx.draw_networkx_edge_labels(
+                G, pos, edge_labels=edge_labels, ax=ax,
+                font_size=_FONT_SIZE, font_color="#1f1a4e",
+                connectionstyle="arc3,rad=0.12",
+                bbox=dict(boxstyle="round,pad=0.18", fc="white",
+                          ec="#2C3E50", alpha=0.85, lw=0.6),
+            )
+    else:
+        nx.draw(
+            G,
+            pos,
+            ax=ax,
+            with_labels=with_labels,
+            node_color=node_colors,
+            node_size=_NODE_SIZE,
+            font_size=_FONT_SIZE,
+            font_weight="bold",
+            edge_color="#2C3E50",
+            width=1.4,
+            arrowsize=arrowsize,
+        )
+    ax.margins(0.12 if weighted else 0.08)
     ax.set_axis_off()
 
     buf = BytesIO()
@@ -82,7 +134,12 @@ def render_graph(
     return Image.open(buf).copy()
 
 
-def _layout(G: nx.Graph, seed: int = 42, gap: float = 0.6) -> dict:
+def _layout(
+    G: nx.Graph,
+    seed: int = 42,
+    gap: float = 0.6,
+    min_dist: float = _MIN_NODE_DIST,
+) -> dict:
     """Layout for the direct view.
 
     Single-component graphs use Kamada-Kawai, which spreads nodes more
@@ -97,13 +154,13 @@ def _layout(G: nx.Graph, seed: int = 42, gap: float = 0.6) -> dict:
         else nx.connected_components(G)
     )
     if len(components) <= 1:
-        return _component_layout(G, seed)
+        return _component_layout(G, seed, min_dist)
 
     components.sort(key=len, reverse=True)
     sublayouts: list[tuple[dict, float, float]] = []
     for comp in components:
         H = G.subgraph(comp)
-        sub = _component_layout(H, seed)
+        sub = _component_layout(H, seed, min_dist)
         xs = np.array([p[0] for p in sub.values()])
         ys = np.array([p[1] for p in sub.values()])
         cx, cy = float(xs.mean()), float(ys.mean())
@@ -125,7 +182,7 @@ def _layout(G: nx.Graph, seed: int = 42, gap: float = 0.6) -> dict:
     return pos
 
 
-def _component_layout(H: nx.Graph, seed: int) -> dict:
+def _component_layout(H: nx.Graph, seed: int, min_dist: float) -> dict:
     """Per-component layout. Kamada-Kawai gives uniform spacing for
     most small graphs but occasionally collapses graph-equivalent
     nodes onto the same point. A direct repel pass enforces a minimum
@@ -136,12 +193,12 @@ def _component_layout(H: nx.Graph, seed: int) -> dict:
         pos = nx.kamada_kawai_layout(H)
     except (nx.NetworkXError, ValueError):
         pos = nx.spring_layout(H, seed=seed)
-    return _repel_overlaps(pos)
+    return _repel_overlaps(pos, min_dist)
 
 
-def _repel_overlaps(pos: dict) -> dict:
+def _repel_overlaps(pos: dict, min_dist: float) -> dict:
     """Iteratively push pairs of nodes apart until every pair sits at
-    least ``_MIN_NODE_DIST`` apart. Coordinates are 2D numpy arrays."""
+    least ``min_dist`` apart. Coordinates are 2D numpy arrays."""
     if not pos:
         return pos
     nodes = list(pos.keys())
@@ -153,14 +210,14 @@ def _repel_overlaps(pos: dict) -> dict:
             for j in range(i + 1, len(nodes)):
                 delta = arr[j] - arr[i]
                 dist = float(np.linalg.norm(delta))
-                if dist >= _MIN_NODE_DIST:
+                if dist >= min_dist:
                     continue
                 if dist < 1e-9:
                     # Same point: pick a deterministic-ish random axis.
                     delta = rng.normal(size=2)
                     dist = float(np.linalg.norm(delta))
                 direction = delta / dist
-                push = (_MIN_NODE_DIST - dist) / 2 + 1e-3
+                push = (min_dist - dist) / 2 + 1e-3
                 arr[i] -= direction * push
                 arr[j] += direction * push
                 moved = True
