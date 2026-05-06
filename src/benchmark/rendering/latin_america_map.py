@@ -172,7 +172,7 @@ def _render_image(
         cfeature.LAKES, facecolor=_OCEAN, edgecolor=_COAST, linewidth=0.3,
     )
 
-    all_texts = []
+    city_texts = []
     marker_xs: list[float] = []
     marker_ys: list[float] = []
 
@@ -190,9 +190,16 @@ def _render_image(
             zorder=4,
         )
         ax.add_patch(arr)
-        mid_lon = 0.5 * (lon_u + lon_v)
-        mid_lat = 0.5 * (lat_u + lat_v)
-        t = ax.text(
+        # Quadratic Bezier midpoint for matplotlib's "arc3,rad=R":
+        # control point = chord midpoint + R·(dy, -dx), so the curve
+        # midpoint = chord midpoint + 0.5·R·(dy, -dx). Anchors the
+        # weight pill on the actual arc instead of the straight
+        # midpoint, which can sit far off the arc for long edges
+        # (e.g. Tijuana → Punta Arenas crossing the Pacific).
+        dx, dy = lon_v - lon_u, lat_v - lat_u
+        mid_lon = 0.5 * (lon_u + lon_v) + 0.5 * rad * dy
+        mid_lat = 0.5 * (lat_u + lat_v) - 0.5 * rad * dx
+        ax.text(
             mid_lon, mid_lat, f"{w}h",
             ha="center", va="center", fontsize=11,
             color=_WEIGHT_TEXT, fontweight="bold",
@@ -200,7 +207,6 @@ def _render_image(
                       ec=_EDGE_COLOR, alpha=0.97, lw=0.8),
             transform=ccrs.PlateCarree(), zorder=5,
         )
-        all_texts.append(t)
 
     for i in range(n):
         lat, lon = coords[i]
@@ -231,10 +237,13 @@ def _render_image(
                       ec=color, alpha=0.96, lw=0.9),
             transform=ccrs.PlateCarree(), zorder=8,
         )
-        all_texts.append(t)
+        city_texts.append(t)
 
+    # Only city labels are nudged — weight pills stay anchored on the
+    # arc midpoint where they were placed, so they can never drift away
+    # from their arrow.
     adjust_text(
-        all_texts,
+        city_texts,
         x=marker_xs, y=marker_ys,
         ax=ax,
         expand=(1.4, 1.6),

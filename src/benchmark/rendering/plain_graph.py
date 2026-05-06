@@ -39,6 +39,11 @@ _REPEL_ITERATIONS = 60
 _FIGSIZE = (6, 6)
 _FIGSIZE_WEIGHTED = (9, 9)
 
+# Two distinct curvatures (different sign AND magnitude) so fan-in /
+# fan-out edges with shared endpoints stop sharing a single arc and
+# their weight labels separate vertically.
+_EDGE_RADS: tuple[float, float] = (0.18, -0.10)
+
 
 def render_graph(
     G: nx.Graph,
@@ -78,9 +83,6 @@ def render_graph(
 
     fig, ax = plt.subplots(figsize=figsize)
     if weighted:
-        # Curved edges spread the per-edge midpoints apart, so weight
-        # labels stop piling on top of each other where edges fan in or
-        # cross close to a shared midpoint.
         nx.draw_networkx_nodes(
             G, pos, ax=ax,
             node_color=node_colors, node_size=_NODE_SIZE,
@@ -90,26 +92,41 @@ def render_graph(
                 G, pos, ax=ax,
                 font_size=_FONT_SIZE, font_weight="bold",
             )
-        nx.draw_networkx_edges(
-            G, pos, ax=ax,
-            edge_color="#2C3E50", width=1.4,
-            arrowsize=arrowsize,
-            connectionstyle="arc3,rad=0.12",
-            node_size=_NODE_SIZE,
-        )
+        # Two curvature buckets: edges fanning into or out of a shared
+        # node land on visibly different arcs, and their weight labels
+        # stop piling on top of each other.
         edge_labels = {
             (u, v): str(d["weight"])
             for u, v, d in G.edges(data=True)
             if "weight" in d
         }
-        if edge_labels:
-            nx.draw_networkx_edge_labels(
-                G, pos, edge_labels=edge_labels, ax=ax,
-                font_size=_FONT_SIZE, font_color="#1f1a4e",
-                connectionstyle="arc3,rad=0.12",
-                bbox=dict(boxstyle="round,pad=0.18", fc="white",
-                          ec="#2C3E50", alpha=0.85, lw=0.6),
+        for bucket, rad in enumerate(_EDGE_RADS):
+            bucket_edges = [
+                (u, v) for u, v in G.edges()
+                if (u + v) % len(_EDGE_RADS) == bucket
+            ]
+            if not bucket_edges:
+                continue
+            connectionstyle = f"arc3,rad={rad}"
+            nx.draw_networkx_edges(
+                G, pos, ax=ax, edgelist=bucket_edges,
+                edge_color="#2C3E50", width=1.4,
+                arrowsize=arrowsize,
+                connectionstyle=connectionstyle,
+                node_size=_NODE_SIZE,
             )
+            bucket_labels = {
+                e: edge_labels[e] for e in bucket_edges if e in edge_labels
+            }
+            if bucket_labels:
+                nx.draw_networkx_edge_labels(
+                    G, pos, edge_labels=bucket_labels, ax=ax,
+                    font_size=_FONT_SIZE, font_color="#1f1a4e",
+                    connectionstyle=connectionstyle,
+                    rotate=False,
+                    bbox=dict(boxstyle="round,pad=0.18", fc="white",
+                              ec="#2C3E50", alpha=0.85, lw=0.6),
+                )
     else:
         nx.draw(
             G,
@@ -183,17 +200,40 @@ def _layout(
 
 
 def _component_layout(H: nx.Graph, seed: int, min_dist: float) -> dict:
-    """Per-component layout. Kamada-Kawai gives uniform spacing for
-    most small graphs but occasionally collapses graph-equivalent
-    nodes onto the same point. A direct repel pass enforces a minimum
-    pairwise distance after layout."""
+    """Per-component layout. DAGs use a longest-path layered layout so
+    sources sit at the top and sinks at the bottom, matching the visual
+    flow of edges. Everything else uses Kamada-Kawai for uniform spacing.
+    A repel pass enforces a minimum pairwise distance after layout."""
     if len(H) < 2:
         return nx.spring_layout(H, seed=seed)
-    try:
-        pos = nx.kamada_kawai_layout(H)
-    except (nx.NetworkXError, ValueError):
-        pos = nx.spring_layout(H, seed=seed)
+    if H.is_directed() and nx.is_directed_acyclic_graph(H):
+        pos = _layered_dag_layout(H)
+    else:
+        try:
+            pos = nx.kamada_kawai_layout(H)
+        except (nx.NetworkXError, ValueError):
+            pos = nx.spring_layout(H, seed=seed)
     return _repel_overlaps(pos, min_dist)
+
+
+def _layered_dag_layout(H: nx.DiGraph) -> dict:
+    """Longest-path layering: layer[v] = max(layer[u]+1) over predecessors.
+
+    Stamps the layer onto a shallow copy (so the caller's graph is
+    untouched) and hands it to ``multipartite_layout`` with horizontal
+    align — sources end up on the top row, sinks on the bottom.
+    """
+    layers: dict = {}
+    for v in nx.topological_sort(H):
+        preds = list(H.predecessors(v))
+        layers[v] = max((layers[u] + 1 for u in preds), default=0)
+    # Negate so multipartite_layout places the source (layer 0, now the
+    # largest key) at the top and the sink (most negative key) at the
+    # bottom — matplotlib's y axis points up.
+    H_copy = H.copy()
+    for v, layer in layers.items():
+        H_copy.nodes[v]["_layer"] = -layer
+    return nx.multipartite_layout(H_copy, subset_key="_layer", align="horizontal")
 
 
 def _repel_overlaps(pos: dict, min_dist: float) -> dict:
