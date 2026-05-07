@@ -46,9 +46,9 @@ _COLORING_SIZES: dict[str, tuple[int, int]] = {
 }
 
 _SHORTEST_PATH_SIZES: dict[str, tuple[int, int]] = {
-    "easy": (5, 7),
-    "medium": (8, 10),
-    "hard": (11, 14),
+    "easy": (3, 5),
+    "medium": (6, 8),
+    "hard": (9, 12),
 }
 _SHORTEST_PATH_P = 0.18
 _SHORTEST_PATH_WEIGHT = (1, 10)
