@@ -245,47 +245,106 @@ def _sample_for_edge_target(
     tol: float,
     max_attempts: int,
 ) -> tuple[Sample, int, int]:
-    """Rejection-sample by varying node count to hit ``target_edges``.
+    """Search for a graph with ~``target_edges`` edges, then render once.
 
-    Each attempt picks a random node count and generates one sample.
-    Accept if the edge count is within ``tol`` of target; otherwise
-    track the closest sample and return it as a fallback.
+    The search probes candidates via ``task.sample_graph`` (no rendering),
+    walks node counts outward from the per-task analytical inverse of the
+    edge-count formula, and only calls ``task.generate`` on the accepted
+    ``(seed, node_count)`` pair. This keeps the maze/Voronoi disguise
+    render — the dominant cost — outside the rejection loop.
     """
     import math
-    import random
 
-    # A rough node-count range that can plausibly produce the target
-    # edge count for any of the four tasks: trees give ~V-1 edges, dense
-    # graphs scale ~3V. So V in [target/3 - 2, target + 4] is generous.
-    v_lo = max(3, target_edges // 3 - 2)
-    v_hi = max(v_lo + 2, target_edges + 4)
-    lo, hi = tol_lo, tol_hi = (1 - tol) * target_edges, (1 + tol) * target_edges
+    import numpy as np
 
-    rng = random.Random(base_seed)
-    best_sample = None
-    best_v = 0
-    best_e = 0
+    n_seed, n_lo, n_hi = _node_count_for_edge_target(task.name, target_edges)
+    tol_lo = (1 - tol) * target_edges
+    tol_hi = (1 + tol) * target_edges
+
+    best: tuple[int, int, int, int] | None = None  # (seed, node_count, v, e)
     best_diff = math.inf
-    for attempt in range(max_attempts):
-        nc = rng.randint(v_lo, v_hi)
-        seed = base_seed + attempt * 101
-        sample = task.generate(
-            seed=seed,
-            difficulty="medium",
-            config=cfg,
-            include_adjacency_matrix=include_adj,
-            node_count=nc,
-        )
-        v = _extract_meta(sample, "n_vertices")
-        e = _extract_meta(sample, "n_edges")
-        diff = abs(e - target_edges)
-        if diff < best_diff:
-            best_sample = sample
-            best_v, best_e, best_diff = v, e, diff
-        if tol_lo <= e <= tol_hi:
-            return sample, v, e
-    assert best_sample is not None
-    return best_sample, best_v, best_e
+
+    # Walk node counts outward from the analytical seed: n_seed, n_seed±1,
+    # n_seed±2, ... clipped to [n_lo, n_hi]. At each node count, draw a
+    # handful of seeds before widening.
+    seeds_per_nc = 5
+    attempt = 0
+    for offset in range(0, max(n_hi - n_seed, n_seed - n_lo) + 1):
+        for nc in {max(n_lo, n_seed - offset), min(n_hi, n_seed + offset)}:
+            if nc < 3:
+                continue
+            for k in range(seeds_per_nc):
+                if attempt >= max_attempts:
+                    break
+                seed = base_seed + attempt * 101
+                attempt += 1
+                rng = np.random.default_rng(seed)
+                try:
+                    G = task.sample_graph(rng, "medium", node_count=nc)
+                except Exception:
+                    continue
+                v = int(G.number_of_nodes())
+                e = int(G.number_of_edges())
+                diff = abs(e - target_edges)
+                if diff < best_diff:
+                    best = (seed, nc, v, e)
+                    best_diff = diff
+                if tol_lo <= e <= tol_hi:
+                    sample = task.generate(
+                        seed=seed,
+                        difficulty="medium",
+                        config=cfg,
+                        include_adjacency_matrix=include_adj,
+                        node_count=nc,
+                    )
+                    return sample, v, e
+            if attempt >= max_attempts:
+                break
+        if attempt >= max_attempts:
+            break
+
+    assert best is not None, "no candidate found — sample_graph never succeeded"
+    seed, nc, v, e = best
+    sample = task.generate(
+        seed=seed,
+        difficulty="medium",
+        config=cfg,
+        include_adjacency_matrix=include_adj,
+        node_count=nc,
+    )
+    return sample, v, e
+
+
+def _node_count_for_edge_target(
+    task_name: str, target_edges: int
+) -> tuple[int, int, int]:
+    """Return ``(n_seed, n_lo, n_hi)`` for a per-task edge-count inverse.
+
+    Each task has a known edge-count formula in expectation:
+      - shortest_path: ER over upper triangle with p=0.18 plus orphan
+        fix-ups → E ≈ p·n(n−1)/2
+      - coloring: planar Delaunay → E ≈ 3n − 6
+      - connectivity / directed_connectivity: spanning tree + extras over
+        lattice subgraph → E ≈ 1.15·n
+    Unknown tasks fall back to a wide generic window.
+    """
+    import math
+
+    E = max(1, int(target_edges))
+    if task_name == "shortest_path":
+        p = 0.18
+        # n*(n-1)/2 * p ≈ E  →  n ≈ (1 + sqrt(1 + 8E/p)) / 2
+        n_seed = max(3, int(round((1 + math.sqrt(1 + 8 * E / p)) / 2)))
+        return n_seed, max(3, n_seed - 3), n_seed + 3
+    if task_name == "coloring":
+        n_seed = max(3, int(round((E + 6) / 3)))
+        return n_seed, max(3, n_seed - 2), n_seed + 2
+    if task_name in ("connectivity", "directed_connectivity"):
+        n_seed = max(3, int(round(E / 1.15)))
+        return n_seed, max(3, n_seed - 3), n_seed + 4
+    # Generic fallback: cover trees through dense graphs.
+    n_seed = max(3, E // 2)
+    return n_seed, max(3, E // 3 - 2), E + 4
 
 
 def _extract_meta(sample: Sample, key: str) -> int:
