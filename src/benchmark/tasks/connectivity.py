@@ -8,15 +8,20 @@ from PIL import Image
 
 from ..base import BenchmarkTask
 from ..graph_sampling import connectivity_graph
-from ..rendering import build_maze, render_graph
+from ..rendering import RenderConfig, build_maze, node_label, render_graph
 from ..rendering.maze import Maze
 
 
 class ConnectivityTask(BenchmarkTask):
     name = "connectivity"
 
-    def sample_graph(self, rng: np.random.Generator, difficulty: str) -> nx.Graph:
-        G, entrance, exit_ = connectivity_graph(rng, difficulty)
+    def sample_graph(
+        self,
+        rng: np.random.Generator,
+        difficulty: str,
+        node_count: int | None = None,
+    ) -> nx.Graph:
+        G, entrance, exit_ = connectivity_graph(rng, difficulty, node_count=node_count)
         G.graph["entrance"] = entrance
         G.graph["exit"] = exit_
         return G
@@ -25,16 +30,23 @@ class ConnectivityTask(BenchmarkTask):
         u, v = G.graph["entrance"], G.graph["exit"]
         return "Yes" if nx.has_path(G, u, v) else "No"
 
-    def direct_prompt(self, G: nx.Graph) -> str:
+    def direct_prompt(self, G: nx.Graph, config: RenderConfig | None = None) -> str:
+        cfg = config if config is not None else RenderConfig()
         u, v = G.graph["entrance"], G.graph["exit"]
-        return f"Q: Is there a path from node {u} to node {v}?\nA:"
+        if cfg.label_style == "none":
+            return "Q: Is there a path from the green node to the red node?\nA:"
+        u_lbl = node_label(u, cfg.label_style)
+        v_lbl = node_label(v, cfg.label_style)
+        return f"Q: Is there a path from node {u_lbl} to node {v_lbl}?\nA:"
 
-    def render_direct(self, G: nx.Graph) -> Image.Image:
+    def render_direct(
+        self, G: nx.Graph, config: RenderConfig | None = None
+    ) -> Image.Image:
         highlights = {
             G.graph["entrance"]: "#58CF76",
             G.graph["exit"]: "#EB5E5E",
         }
-        return render_graph(G, highlights=highlights)
+        return render_graph(G, highlights=highlights, config=config)
 
     def disguise_prompt(self) -> str:
         return (

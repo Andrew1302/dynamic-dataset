@@ -8,33 +8,51 @@ from PIL import Image
 
 from ..base import BenchmarkTask
 from ..graph_sampling import shortest_path_graph
-from ..rendering import build_latin_america_map, render_graph
+from ..rendering import RenderConfig, build_latin_america_map, node_label, render_graph
 from ..rendering.latin_america_map import LatinAmericaMap
 
 
 class ShortestPathTask(BenchmarkTask):
     name = "shortest_path"
 
-    def sample_graph(self, rng: np.random.Generator, difficulty: str) -> nx.DiGraph:
-        return shortest_path_graph(rng, difficulty)
+    def sample_graph(
+        self,
+        rng: np.random.Generator,
+        difficulty: str,
+        node_count: int | None = None,
+    ) -> nx.DiGraph:
+        return shortest_path_graph(rng, difficulty, node_count=node_count)
 
     def solve(self, G: nx.DiGraph) -> str:
         s, t = G.graph["source"], G.graph["sink"]
         return str(nx.shortest_path_length(G, s, t, weight="weight"))
 
-    def direct_prompt(self, G: nx.DiGraph) -> str:
+    def direct_prompt(self, G: nx.DiGraph, config: RenderConfig | None = None) -> str:
+        cfg = config if config is not None else RenderConfig()
         s, t = G.graph["source"], G.graph["sink"]
+        if cfg.label_style == "none":
+            return (
+                "Q: In the weighted directed acyclic graph shown, what is the "
+                "minimum-weight path total from the green vertex (source) to "
+                "the pink vertex (sink)?\nA:"
+            )
+        s_lbl = node_label(s, cfg.label_style)
+        t_lbl = node_label(t, cfg.label_style)
         return (
             f"Q: In the weighted directed acyclic graph shown, what is the "
-            f"minimum-weight path total from vertex {s} to vertex {t}?\nA:"
+            f"minimum-weight path total from vertex {s_lbl} to vertex {t_lbl}?\nA:"
         )
 
-    def render_direct(self, G: nx.DiGraph) -> Image.Image:
+    def render_direct(
+        self, G: nx.DiGraph, config: RenderConfig | None = None
+    ) -> Image.Image:
         highlights = {
             G.graph["source"]: "#1D9E75",
             G.graph["sink"]: "#C2185B",
         }
-        return render_graph(G, highlights=highlights, arrowsize=22, weighted=True)
+        return render_graph(
+            G, highlights=highlights, arrowsize=22, weighted=True, config=config
+        )
 
     def disguise_prompt(self) -> str:
         return (

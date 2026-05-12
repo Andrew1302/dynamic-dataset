@@ -16,6 +16,8 @@ import networkx as nx
 import numpy as np
 from PIL import Image
 
+from .rendering import RenderConfig, format_adjacency
+
 
 class Sample(TypedDict):
     direct_prompt: str
@@ -23,6 +25,8 @@ class Sample(TypedDict):
     disguise_prompt: str
     disguise_image: Image.Image
     answer: str
+    n_vertices: int
+    n_edges: int
 
 
 @runtime_checkable
@@ -55,16 +59,23 @@ class BenchmarkTask:
 
     # --- abstract contract ---------------------------------------------------
 
-    def sample_graph(self, rng: np.random.Generator, difficulty: str) -> nx.Graph:
+    def sample_graph(
+        self,
+        rng: np.random.Generator,
+        difficulty: str,
+        node_count: int | None = None,
+    ) -> nx.Graph:
         raise NotImplementedError
 
     def solve(self, G: nx.Graph) -> str:
         raise NotImplementedError
 
-    def direct_prompt(self, G: nx.Graph) -> str:
+    def direct_prompt(self, G: nx.Graph, config: RenderConfig | None = None) -> str:
         raise NotImplementedError
 
-    def render_direct(self, G: nx.Graph) -> Image.Image:
+    def render_direct(
+        self, G: nx.Graph, config: RenderConfig | None = None
+    ) -> Image.Image:
         raise NotImplementedError
 
     def disguise_prompt(self) -> str:
@@ -75,13 +86,37 @@ class BenchmarkTask:
 
     # --- concrete entry point ------------------------------------------------
 
-    def generate(self, seed: int, difficulty: str = "easy") -> Sample:
+    def generate(
+        self,
+        seed: int,
+        difficulty: str = "easy",
+        config: RenderConfig | None = None,
+        include_adjacency_matrix: bool = False,
+        node_count: int | None = None,
+    ) -> Sample:
+        cfg = config if config is not None else RenderConfig()
         rng = np.random.default_rng(seed)
-        G = self.sample_graph(rng, difficulty)
+        G = self.sample_graph(rng, difficulty, node_count=node_count)
+        G.graph["n_vertices"] = int(G.number_of_nodes())
+        G.graph["n_edges"] = int(G.number_of_edges())
+
+        direct_prompt = self.direct_prompt(G, cfg)
+        if include_adjacency_matrix:
+            matrix = format_adjacency(G, cfg.label_style)
+            # Insert the matrix before the trailing "A:" so the model
+            # sees it as context rather than as part of its answer.
+            block = f"Adjacency matrix:\n{matrix}\n"
+            if direct_prompt.endswith("\nA:"):
+                direct_prompt = direct_prompt[: -len("\nA:")] + f"\n\n{block}\nA:"
+            else:
+                direct_prompt = f"{direct_prompt}\n\n{block}"
+
         return {
-            "direct_prompt": self.direct_prompt(G),
-            "direct_image": self.render_direct(G),
+            "direct_prompt": direct_prompt,
+            "direct_image": self.render_direct(G, cfg),
             "disguise_prompt": self.disguise_prompt(),
             "disguise_image": self.disguise(G, seed).render(),
             "answer": self.solve(G),
+            "n_vertices": int(G.graph["n_vertices"]),
+            "n_edges": int(G.graph["n_edges"]),
         }

@@ -8,27 +8,34 @@ from PIL import Image
 
 from ..base import BenchmarkTask
 from ..graph_sampling import coloring_graph
-from ..rendering import build_map, render_graph
+from ..rendering import RenderConfig, build_map, render_graph
 from ..rendering.map_coloring import Map
 
 
 class ColoringTask(BenchmarkTask):
     name = "coloring"
 
-    def sample_graph(self, rng: np.random.Generator, difficulty: str) -> nx.Graph:
-        return coloring_graph(rng, difficulty)
+    def sample_graph(
+        self,
+        rng: np.random.Generator,
+        difficulty: str,
+        node_count: int | None = None,
+    ) -> nx.Graph:
+        return coloring_graph(rng, difficulty, node_count=node_count)
 
     def solve(self, G: nx.Graph) -> str:
         return str(_chromatic_number(G))
 
-    def direct_prompt(self, G: nx.Graph) -> str:
+    def direct_prompt(self, G: nx.Graph, config: RenderConfig | None = None) -> str:
         return (
             "Q: What is the minimum number of colors needed to color this graph "
             "so that no two adjacent nodes share a color?\nA:"
         )
 
-    def render_direct(self, G: nx.Graph) -> Image.Image:
-        return render_graph(G)
+    def render_direct(
+        self, G: nx.Graph, config: RenderConfig | None = None
+    ) -> Image.Image:
+        return render_graph(G, config=config)
 
     def disguise_prompt(self) -> str:
         return (

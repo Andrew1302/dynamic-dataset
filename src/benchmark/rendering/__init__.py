@@ -1,5 +1,7 @@
 """Image renderers for benchmark tasks (plain graph + disguises)."""
 
+from .adjacency import format_adjacency
+from .config import DEFAULT_NODE_COLOR, EdgeStyle, LabelStyle, RenderConfig, node_label
 from .directed_maze import DirectedMaze, build_directed_maze, render_directed_maze
 from .latin_america_map import (
     LatinAmericaMap,
@@ -11,14 +13,20 @@ from .maze import Maze, build_maze, render_maze
 from .plain_graph import render_graph
 
 __all__ = [
+    "DEFAULT_NODE_COLOR",
     "DirectedMaze",
+    "EdgeStyle",
+    "LabelStyle",
     "LatinAmericaMap",
     "Map",
     "Maze",
+    "RenderConfig",
     "build_directed_maze",
     "build_latin_america_map",
     "build_map",
     "build_maze",
+    "format_adjacency",
+    "node_label",
     "render_directed_maze",
     "render_graph",
     "render_latin_america_map",

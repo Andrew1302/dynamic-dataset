@@ -12,8 +12,8 @@ import networkx as nx
 import numpy as np
 from PIL import Image
 
+from .config import DEFAULT_NODE_COLOR, RenderConfig, node_label
 
-_DEFAULT_COLOR = "#AED6F1"
 
 # Node visual size. Kept small enough that a 15-node component fits in
 # the default figure without label overlap.
@@ -41,7 +41,8 @@ _FIGSIZE_WEIGHTED = (9, 9)
 
 # Two distinct curvatures (different sign AND magnitude) so fan-in /
 # fan-out edges with shared endpoints stop sharing a single arc and
-# their weight labels separate vertically.
+# their weight labels separate vertically. Only used when
+# ``RenderConfig.edge_style == "curved"``.
 _EDGE_RADS: tuple[float, float] = (0.18, -0.10)
 
 
@@ -51,6 +52,7 @@ def render_graph(
     with_labels: bool = True,
     arrowsize: int = 10,
     weighted: bool = False,
+    config: RenderConfig | None = None,
 ) -> Image.Image:
     """Render *G* to a square PIL image.
 
@@ -64,22 +66,35 @@ def render_graph(
         NetworkX graph. ``DiGraph`` instances are drawn with arrowheads.
     highlights
         Optional ``{node: color}`` mapping. Highlighted nodes are drawn in
-        the given color; unhighlighted nodes use the default palette.
+        the given color; unhighlighted nodes use ``config.node_color``.
     with_labels
-        Whether to draw numeric node labels.
+        Whether to draw node labels. Combined with
+        ``config.label_style="none"`` to suppress labels.
     arrowsize
         Arrowhead size for directed graphs. Ignored for undirected.
     weighted
         If ``True``, draw the integer ``weight`` attribute as a label on
         each edge. Edges without a ``weight`` attribute are skipped.
+    config
+        Visualization configuration (label style, node color, edge
+        curvature). Defaults to :class:`RenderConfig()` — numeric
+        labels, light-blue palette, straight edges.
     """
+    cfg = config if config is not None else RenderConfig()
     highlights = highlights or {}
+
+    show_labels = with_labels and cfg.label_style != "none"
+    label_map: dict | None = None
+    if show_labels:
+        label_map = {n: node_label(n, cfg.label_style) for n in G.nodes()}
+
+    base_color = cfg.node_color or DEFAULT_NODE_COLOR
 
     min_dist = _MIN_NODE_DIST_WEIGHTED if weighted else _MIN_NODE_DIST
     figsize = _FIGSIZE_WEIGHTED if weighted else _FIGSIZE
 
     pos = _layout(G, min_dist=min_dist)
-    node_colors = [highlights.get(n, _DEFAULT_COLOR) for n in G.nodes()]
+    node_colors = [highlights.get(n, base_color) for n in G.nodes()]
 
     fig, ax = plt.subplots(figsize=figsize)
     if weighted:
@@ -87,60 +102,78 @@ def render_graph(
             G, pos, ax=ax,
             node_color=node_colors, node_size=_NODE_SIZE,
         )
-        if with_labels:
+        if show_labels:
             nx.draw_networkx_labels(
-                G, pos, ax=ax,
+                G, pos, ax=ax, labels=label_map,
                 font_size=_FONT_SIZE, font_weight="bold",
             )
-        # Two curvature buckets: edges fanning into or out of a shared
-        # node land on visibly different arcs, and their weight labels
-        # stop piling on top of each other.
         edge_labels = {
             (u, v): str(d["weight"])
             for u, v, d in G.edges(data=True)
             if "weight" in d
         }
-        for bucket, rad in enumerate(_EDGE_RADS):
-            bucket_edges = [
-                (u, v) for u, v in G.edges()
-                if (u + v) % len(_EDGE_RADS) == bucket
-            ]
-            if not bucket_edges:
-                continue
-            connectionstyle = f"arc3,rad={rad}"
+        if cfg.edge_style == "curved":
+            # Two curvature buckets: edges fanning into or out of a shared
+            # node land on visibly different arcs, and their weight labels
+            # stop piling on top of each other.
+            for bucket, rad in enumerate(_EDGE_RADS):
+                bucket_edges = [
+                    (u, v) for u, v in G.edges()
+                    if (u + v) % len(_EDGE_RADS) == bucket
+                ]
+                if not bucket_edges:
+                    continue
+                connectionstyle = f"arc3,rad={rad}"
+                nx.draw_networkx_edges(
+                    G, pos, ax=ax, edgelist=bucket_edges,
+                    edge_color="#2C3E50", width=1.4,
+                    arrowsize=arrowsize,
+                    connectionstyle=connectionstyle,
+                    node_size=_NODE_SIZE,
+                )
+                bucket_labels = {
+                    e: edge_labels[e] for e in bucket_edges if e in edge_labels
+                }
+                if bucket_labels:
+                    nx.draw_networkx_edge_labels(
+                        G, pos, edge_labels=bucket_labels, ax=ax,
+                        font_size=_FONT_SIZE, font_color="#1f1a4e",
+                        connectionstyle=connectionstyle,
+                        rotate=False,
+                        bbox=dict(boxstyle="round,pad=0.18", fc="white",
+                                  ec="#2C3E50", alpha=0.85, lw=0.6),
+                    )
+        else:
             nx.draw_networkx_edges(
-                G, pos, ax=ax, edgelist=bucket_edges,
+                G, pos, ax=ax,
                 edge_color="#2C3E50", width=1.4,
                 arrowsize=arrowsize,
-                connectionstyle=connectionstyle,
                 node_size=_NODE_SIZE,
             )
-            bucket_labels = {
-                e: edge_labels[e] for e in bucket_edges if e in edge_labels
-            }
-            if bucket_labels:
+            if edge_labels:
                 nx.draw_networkx_edge_labels(
-                    G, pos, edge_labels=bucket_labels, ax=ax,
+                    G, pos, edge_labels=edge_labels, ax=ax,
                     font_size=_FONT_SIZE, font_color="#1f1a4e",
-                    connectionstyle=connectionstyle,
                     rotate=False,
                     bbox=dict(boxstyle="round,pad=0.18", fc="white",
                               ec="#2C3E50", alpha=0.85, lw=0.6),
                 )
     else:
-        nx.draw(
-            G,
-            pos,
-            ax=ax,
-            with_labels=with_labels,
-            node_color=node_colors,
-            node_size=_NODE_SIZE,
-            font_size=_FONT_SIZE,
-            font_weight="bold",
-            edge_color="#2C3E50",
-            width=1.4,
-            arrowsize=arrowsize,
+        nx.draw_networkx_nodes(
+            G, pos, ax=ax,
+            node_color=node_colors, node_size=_NODE_SIZE,
         )
+        nx.draw_networkx_edges(
+            G, pos, ax=ax,
+            edge_color="#2C3E50", width=1.4,
+            arrowsize=arrowsize,
+            node_size=_NODE_SIZE,
+        )
+        if show_labels:
+            nx.draw_networkx_labels(
+                G, pos, ax=ax, labels=label_map,
+                font_size=_FONT_SIZE, font_weight="bold",
+            )
     ax.margins(0.12 if weighted else 0.08)
     ax.set_axis_off()
 

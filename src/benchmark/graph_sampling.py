@@ -61,6 +61,7 @@ _NBRS = ((-1, 0), (1, 0), (0, -1), (0, 1))
 def connectivity_graph(
     rng: np.random.Generator,
     difficulty: str,
+    node_count: int | None = None,
 ) -> tuple[nx.Graph, int, int]:
     """Return ``(G, entrance, exit)`` for the connectivity task.
 
@@ -68,23 +69,54 @@ def connectivity_graph(
     For Yes, entrance/exit are non-adjacent within the same component. For
     No, both sit inside components of size ≥ 2 (neither endpoint is a
     lone dot). ``G`` is always a lattice subgraph — see module docstring.
+
+    Parameters
+    ----------
+    node_count
+        If set, the returned graph has exactly ``node_count`` nodes
+        (lattice size and fill range are overridden accordingly). Used
+        by the vertex-sweep CLI; for ``node_count < 4`` falls back to
+        the smallest viable graph.
     """
     H, W = _CONNECTIVITY_LATTICE[difficulty]
     fill_lo, fill_hi = _CONNECTIVITY_FILL[difficulty]
+    if node_count is not None:
+        H, W = _lattice_for_node_count(node_count)
     want_yes = bool(rng.integers(0, 2))
 
     if want_yes:
-        return _connected_lattice_pair(rng, H, W, fill_lo, fill_hi)
-    return _disconnected_lattice_pair(rng, H, W, fill_lo, fill_hi)
+        return _connected_lattice_pair(rng, H, W, fill_lo, fill_hi, node_count)
+    return _disconnected_lattice_pair(rng, H, W, fill_lo, fill_hi, node_count)
+
+
+def _lattice_for_node_count(node_count: int) -> tuple[int, int]:
+    """Square-ish lattice with at least 1.6× headroom over ``node_count``.
+
+    Headroom is needed because the blob-growth step picks from a
+    connected subset and may not be able to hit ``node_count`` exactly
+    in a tight lattice (the disconnected variant also splits cells
+    along an empty corridor).
+    """
+    import math
+    side = max(2, int(math.ceil(math.sqrt(max(node_count, 1) * 1.8))))
+    return side, side
 
 
 def _connected_lattice_pair(
-    rng: np.random.Generator, H: int, W: int, fill_lo: float, fill_hi: float
+    rng: np.random.Generator,
+    H: int,
+    W: int,
+    fill_lo: float,
+    fill_hi: float,
+    node_count: int | None = None,
 ) -> tuple[nx.Graph, int, int]:
     """One lattice-connected blob. Pick a non-adjacent pair inside it."""
-    fill = float(rng.uniform(fill_lo, fill_hi))
-    n_target = max(3, int(round(H * W * fill)))
-    n_target = min(n_target, H * W)
+    if node_count is not None:
+        n_target = max(3, min(node_count, H * W))
+    else:
+        fill = float(rng.uniform(fill_lo, fill_hi))
+        n_target = max(3, int(round(H * W * fill)))
+        n_target = min(n_target, H * W)
 
     allowed = [(r, c) for r in range(H) for c in range(W)]
     blob = _grow_lattice_blob(rng, allowed, n_target)
@@ -98,7 +130,12 @@ def _connected_lattice_pair(
 
 
 def _disconnected_lattice_pair(
-    rng: np.random.Generator, H: int, W: int, fill_lo: float, fill_hi: float
+    rng: np.random.Generator,
+    H: int,
+    W: int,
+    fill_lo: float,
+    fill_hi: float,
+    node_count: int | None = None,
 ) -> tuple[nx.Graph, int, int]:
     """Split the lattice along a row or column, grow a blob on each side.
 
@@ -115,9 +152,24 @@ def _disconnected_lattice_pair(
         left = [(r, c) for r in range(H) for c in range(W) if r < split]
         right = [(r, c) for r in range(H) for c in range(W) if r > split]
 
-    fill = float(rng.uniform(fill_lo, fill_hi))
-    n_a = max(2, int(round(len(left) * fill)))
-    n_b = max(2, int(round(len(right) * fill)))
+    if node_count is not None:
+        # Split the total node budget between the two sides, biased
+        # toward whichever side has more allowed cells.
+        budget = max(4, min(node_count, len(left) + len(right)))
+        # At least 2 nodes per side.
+        n_a = max(2, min(len(left), budget // 2))
+        n_b = max(2, min(len(right), budget - n_a))
+        # If one side is too small, push the leftover onto the other.
+        if n_a + n_b < budget:
+            extra = budget - n_a - n_b
+            if n_a + extra <= len(left):
+                n_a += extra
+            else:
+                n_b += extra
+    else:
+        fill = float(rng.uniform(fill_lo, fill_hi))
+        n_a = max(2, int(round(len(left) * fill)))
+        n_b = max(2, int(round(len(right) * fill)))
 
     blob_a = _grow_lattice_blob(rng, left, n_a)
     blob_b = _grow_lattice_blob(rng, right, n_b)
@@ -132,6 +184,7 @@ def _disconnected_lattice_pair(
 def directed_connectivity_graph(
     rng: np.random.Generator,
     difficulty: str,
+    node_count: int | None = None,
 ) -> tuple[nx.DiGraph, int, int]:
     """Return ``(D, entrance, exit)`` for the directed connectivity task.
 
@@ -139,16 +192,24 @@ def directed_connectivity_graph(
     oriented (one direction per edge). Endpoints are chosen so the
     answer is balanced 50/50 between reachable (Yes) and unreachable
     (No) under directed reachability — no two-blob hack needed.
+
+    When ``node_count`` is set, the lattice size is overridden to fit
+    exactly that many cells in the blob (subject to a minimum of 3).
     """
     H, W = _CONNECTIVITY_LATTICE[difficulty]
     fill_lo, fill_hi = _CONNECTIVITY_FILL[difficulty]
+    if node_count is not None:
+        H, W = _lattice_for_node_count(node_count)
     want_yes = bool(rng.integers(0, 2))
     allowed = [(r, c) for r in range(H) for c in range(W)]
 
     D: nx.DiGraph | None = None
     for _ in range(32):
-        fill = float(rng.uniform(fill_lo, fill_hi))
-        n_target = max(3, min(int(round(H * W * fill)), H * W))
+        if node_count is not None:
+            n_target = max(3, min(node_count, H * W))
+        else:
+            fill = float(rng.uniform(fill_lo, fill_hi))
+            n_target = max(3, min(int(round(H * W * fill)), H * W))
         blob = _grow_lattice_blob(rng, allowed, n_target)
         U = _sparsify_lattice(_lattice_subgraph(blob), rng)
         D = _orient_edges(U, rng)
@@ -309,6 +370,7 @@ def _random_spanning_tree(
 def shortest_path_graph(
     rng: np.random.Generator,
     difficulty: str,
+    node_count: int | None = None,
 ) -> nx.DiGraph:
     """Return a weighted DAG for the shortest-path task.
 
@@ -321,8 +383,17 @@ def shortest_path_graph(
     two distinct simple s→t paths, which keeps the task non-trivial.
 
     ``G.graph["source"]`` and ``G.graph["sink"]`` carry the endpoints.
+
+    When ``node_count`` is set, ``n`` is forced to that value rather
+    than sampled from the difficulty's size preset. Must be ≥ 3.
     """
     lo, hi = _SHORTEST_PATH_SIZES[difficulty]
+    if node_count is not None:
+        if node_count < 3:
+            raise ValueError(
+                f"shortest_path_graph: node_count must be ≥ 3, got {node_count}"
+            )
+        lo = hi = node_count
     w_lo, w_hi = _SHORTEST_PATH_WEIGHT
 
     for _ in range(_SHORTEST_PATH_MAX_ATTEMPTS):
@@ -376,7 +447,11 @@ def shortest_path_graph(
     )
 
 
-def coloring_graph(rng: np.random.Generator, difficulty: str) -> nx.Graph:
+def coloring_graph(
+    rng: np.random.Generator,
+    difficulty: str,
+    node_count: int | None = None,
+) -> nx.Graph:
     """Return a Delaunay triangulation over random points in the unit square.
 
     Keeping the full triangulation (no edge drops) lets the map-disguise
@@ -384,9 +459,19 @@ def coloring_graph(rng: np.random.Generator, difficulty: str) -> nx.Graph:
     equals adjacency in the Delaunay graph by duality, so the disguise
     matches G exactly. Chromatic number is ≤ 4 by the four-color theorem
     (typically 3 or 4 on small random point sets).
+
+    When ``node_count`` is set, exactly that many points are placed
+    (must be ≥ 3 for a valid triangulation).
     """
     lo, hi = _COLORING_SIZES[difficulty]
-    target = int(rng.integers(lo, hi + 1))
+    if node_count is not None:
+        if node_count < 3:
+            raise ValueError(
+                f"coloring_graph: node_count must be ≥ 3, got {node_count}"
+            )
+        target = node_count
+    else:
+        target = int(rng.integers(lo, hi + 1))
 
     for _ in range(80):
         pts = rng.random((target, 2))
@@ -412,7 +497,18 @@ def coloring_graph(rng: np.random.Generator, difficulty: str) -> nx.Graph:
             assert nx.check_planarity(G)[0], "Delaunay triangulation must be planar"
             return G
 
-    return nx.cycle_graph(target)
+    # Fallback: a deterministic cycle on the requested node count. The map
+    # disguise reads ``G.nodes[n]["pos"]`` unconditionally, so we stamp
+    # coordinates onto each node here (evenly spaced on a unit circle)
+    # rather than returning the raw cycle_graph result.
+    fallback = nx.cycle_graph(target)
+    for i in range(target):
+        angle = 2.0 * float(np.pi) * i / max(target, 1)
+        fallback.nodes[i]["pos"] = (
+            0.5 + 0.4 * float(np.cos(angle)),
+            0.5 + 0.4 * float(np.sin(angle)),
+        )
+    return fallback
 
 
 def _voronoi_well_behaved(pts: np.ndarray, max_ratio: float = 1.2) -> bool:

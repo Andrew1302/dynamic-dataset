@@ -7,6 +7,14 @@ shared ground-truth answer) for a fresh random graph.
 """
 
 from .base import BenchmarkTask, Sample, get_all_tasks, get_task
+from .rendering import RenderConfig, format_adjacency
 from . import tasks  # noqa: F401  (triggers task registration)
 
-__all__ = ["BenchmarkTask", "Sample", "get_all_tasks", "get_task"]
+__all__ = [
+    "BenchmarkTask",
+    "RenderConfig",
+    "Sample",
+    "format_adjacency",
+    "get_all_tasks",
+    "get_task",
+]

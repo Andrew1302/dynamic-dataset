@@ -8,15 +8,22 @@ from PIL import Image
 
 from ..base import BenchmarkTask
 from ..graph_sampling import directed_connectivity_graph
-from ..rendering import build_directed_maze, render_graph
+from ..rendering import RenderConfig, build_directed_maze, node_label, render_graph
 from ..rendering.directed_maze import DirectedMaze
 
 
 class DirectedConnectivityTask(BenchmarkTask):
     name = "directed_connectivity"
 
-    def sample_graph(self, rng: np.random.Generator, difficulty: str) -> nx.DiGraph:
-        G, entrance, exit_ = directed_connectivity_graph(rng, difficulty)
+    def sample_graph(
+        self,
+        rng: np.random.Generator,
+        difficulty: str,
+        node_count: int | None = None,
+    ) -> nx.DiGraph:
+        G, entrance, exit_ = directed_connectivity_graph(
+            rng, difficulty, node_count=node_count
+        )
         G.graph["entrance"] = entrance
         G.graph["exit"] = exit_
         return G
@@ -24,19 +31,29 @@ class DirectedConnectivityTask(BenchmarkTask):
     def solve(self, G: nx.DiGraph) -> str:
         return "Yes" if nx.has_path(G, G.graph["entrance"], G.graph["exit"]) else "No"
 
-    def direct_prompt(self, G: nx.DiGraph) -> str:
+    def direct_prompt(self, G: nx.DiGraph, config: RenderConfig | None = None) -> str:
+        cfg = config if config is not None else RenderConfig()
         u, v = G.graph["entrance"], G.graph["exit"]
+        if cfg.label_style == "none":
+            return (
+                "Q: Following the arrow directions, is there a directed path "
+                "from the green node to the red node?\nA:"
+            )
+        u_lbl = node_label(u, cfg.label_style)
+        v_lbl = node_label(v, cfg.label_style)
         return (
             f"Q: Following the arrow directions, is there a directed path "
-            f"from node {u} to node {v}?\nA:"
+            f"from node {u_lbl} to node {v_lbl}?\nA:"
         )
 
-    def render_direct(self, G: nx.DiGraph) -> Image.Image:
+    def render_direct(
+        self, G: nx.DiGraph, config: RenderConfig | None = None
+    ) -> Image.Image:
         highlights = {
             G.graph["entrance"]: "#58CF76",
             G.graph["exit"]: "#EB5E5E",
         }
-        return render_graph(G, highlights=highlights, arrowsize=22)
+        return render_graph(G, highlights=highlights, arrowsize=22, config=config)
 
     def disguise_prompt(self) -> str:
         return (
