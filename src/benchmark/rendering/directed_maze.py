@@ -33,6 +33,7 @@ import networkx as nx
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from .config import LabelStyle, node_label
 from .maze import (
     _CORRIDOR,
     _C_BORDER,
@@ -75,6 +76,7 @@ class DirectedMaze:
     arrows: tuple[Arrow, ...] = field(default_factory=tuple)
     cell_px: int = 14
     highlight_all_nodes: bool = True
+    label_style: LabelStyle = "numeric"
 
     def render(self) -> Image.Image:
         decoy_seeds: list[Cell] = []
@@ -83,7 +85,8 @@ class DirectedMaze:
             for node_id, cell in self.seeds.items():
                 if node_id != self.entrance and node_id != self.exit:
                     decoy_seeds.append(cell)
-                labels[cell] = str(node_id)
+                if self.label_style != "none":
+                    labels[cell] = node_label(node_id, self.label_style)
         return _render_image(
             self.maze,
             self.cell_px,
@@ -126,6 +129,7 @@ def build_directed_maze(
     cell_px: int = 18,
     block: int = 7,
     highlight_all_nodes: bool = True,
+    label_style: LabelStyle = "numeric",
 ) -> DirectedMaze:
     """Carve a directed maze. Topology mirrors the underlying undirected
     adjacency; arrows encode direction.
@@ -181,6 +185,7 @@ def build_directed_maze(
         arrows=tuple(arrows),
         cell_px=cell_px,
         highlight_all_nodes=highlight_all_nodes,
+        label_style=label_style,
     )
 
 
@@ -275,9 +280,10 @@ def render_directed_maze(
     cell_px: int = 18,
     block: int = 7,
     highlight_all_nodes: bool = True,
+    label_style: LabelStyle = "numeric",
 ) -> Image.Image:
     return build_directed_maze(
-        G, seed, entrance, exit, cell_px, block, highlight_all_nodes
+        G, seed, entrance, exit, cell_px, block, highlight_all_nodes, label_style
     ).render()
 
 

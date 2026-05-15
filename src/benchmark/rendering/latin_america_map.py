@@ -31,6 +31,8 @@ from PIL import Image
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 
+from .config import LabelStyle, node_label
+
 
 # (name, lat, lon) — the pool size (21) is one more than the maximum n,
 # so farthest-first sampling always has a real choice when picking the
@@ -84,12 +86,26 @@ class LatinAmericaMap:
     cities: tuple[tuple[str, float, float], ...]  # (name, lat, lon), index = node id
     source: int
     sink: int
+    label_style: LabelStyle = "numeric"
+    show_intermediate_nodes: bool = True
 
     def render(self) -> Image.Image:
-        return _render_image(self.edges, self.cities, self.source, self.sink)
+        return _render_image(
+            self.edges,
+            self.cities,
+            self.source,
+            self.sink,
+            label_style=self.label_style,
+            show_intermediate_nodes=self.show_intermediate_nodes,
+        )
 
 
-def build_latin_america_map(G: nx.DiGraph, seed: int) -> LatinAmericaMap:
+def build_latin_america_map(
+    G: nx.DiGraph,
+    seed: int,
+    label_style: LabelStyle = "numeric",
+    show_intermediate_nodes: bool = True,
+) -> LatinAmericaMap:
     """Sample cities for *G*'s vertices and pack a renderable disguise.
 
     Cities are picked from the 21-city pool by farthest-first sampling
@@ -117,6 +133,8 @@ def build_latin_america_map(G: nx.DiGraph, seed: int) -> LatinAmericaMap:
         cities=tuple(chosen),
         source=int(G.graph["source"]),
         sink=int(G.graph["sink"]),
+        label_style=label_style,
+        show_intermediate_nodes=show_intermediate_nodes,
     )
 
 
@@ -155,6 +173,8 @@ def _render_image(
     cities: tuple[tuple[str, float, float], ...],
     source: int,
     sink: int,
+    label_style: LabelStyle = "numeric",
+    show_intermediate_nodes: bool = True,
 ) -> Image.Image:
     n = len(cities)
     coords = {i: (cities[i][1], cities[i][2]) for i in range(n)}  # (lat, lon)
@@ -210,34 +230,44 @@ def _render_image(
 
     for i in range(n):
         lat, lon = coords[i]
+        is_endpoint = i == source or i == sink
         if i == source:
             color, ms, extra = _SOURCE_COLOR, 380, "  (start)"
         elif i == sink:
             color, ms, extra = _SINK_COLOR, 380, "  (end)"
         else:
             color, ms, extra = _INTERMEDIATE_COLOR, 240, ""
-        ax.scatter(
-            lon, lat, s=ms, color=color,
-            edgecolors="white", linewidths=2.2,
-            transform=ccrs.PlateCarree(), zorder=6,
-        )
-        ax.text(
-            lon, lat, str(i),
-            ha="center", va="center", color="white",
-            fontweight="bold", fontsize=11,
-            transform=ccrs.PlateCarree(), zorder=7,
-        )
-        marker_xs.append(lon)
-        marker_ys.append(lat)
-        t = ax.text(
-            lon, lat, f"{names[i]}{extra}",
-            ha="center", va="center", fontsize=11,
-            color=_LABEL_TEXT, fontweight="bold",
-            bbox=dict(boxstyle="round,pad=0.25", fc="white",
-                      ec=color, alpha=0.96, lw=0.9),
-            transform=ccrs.PlateCarree(), zorder=8,
-        )
-        city_texts.append(t)
+
+        # When label_style="none" we strip the integer ID label off the
+        # markers (they're the node-id equivalent in the direct view).
+        # When ``show_intermediate_nodes`` is False we additionally hide
+        # the dot+name for non-endpoint cities; endpoints are always
+        # kept because the prompt references "start city" / "end city".
+        draw_marker = is_endpoint or show_intermediate_nodes
+        if draw_marker:
+            ax.scatter(
+                lon, lat, s=ms, color=color,
+                edgecolors="white", linewidths=2.2,
+                transform=ccrs.PlateCarree(), zorder=6,
+            )
+            if label_style != "none":
+                ax.text(
+                    lon, lat, node_label(i, label_style),
+                    ha="center", va="center", color="white",
+                    fontweight="bold", fontsize=11,
+                    transform=ccrs.PlateCarree(), zorder=7,
+                )
+            marker_xs.append(lon)
+            marker_ys.append(lat)
+            t = ax.text(
+                lon, lat, f"{names[i]}{extra}",
+                ha="center", va="center", fontsize=11,
+                color=_LABEL_TEXT, fontweight="bold",
+                bbox=dict(boxstyle="round,pad=0.25", fc="white",
+                          ec=color, alpha=0.96, lw=0.9),
+                transform=ccrs.PlateCarree(), zorder=8,
+            )
+            city_texts.append(t)
 
     # Only city labels are nudged — weight pills stay anchored on the
     # arc midpoint where they were placed, so they can never drift away
@@ -266,5 +296,15 @@ def _render_image(
     return Image.open(buf).copy()
 
 
-def render_latin_america_map(G: nx.DiGraph, seed: int) -> Image.Image:
-    return build_latin_america_map(G, seed=seed).render()
+def render_latin_america_map(
+    G: nx.DiGraph,
+    seed: int,
+    label_style: LabelStyle = "numeric",
+    show_intermediate_nodes: bool = True,
+) -> Image.Image:
+    return build_latin_america_map(
+        G,
+        seed=seed,
+        label_style=label_style,
+        show_intermediate_nodes=show_intermediate_nodes,
+    ).render()

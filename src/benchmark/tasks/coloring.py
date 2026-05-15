@@ -43,11 +43,32 @@ class ColoringTask(BenchmarkTask):
             "neighboring regions share the same color?\nA:"
         )
 
-    def disguise(self, G: nx.Graph, seed: int) -> Map:
+    def disguise(
+        self,
+        G: nx.Graph,
+        seed: int,
+        config: RenderConfig | None = None,
+    ) -> Map:
+        cfg = config if config is not None else RenderConfig()
+        # label_style="none" → hide region labels. That removes the nodes
+        # from the disguise (the existing show_labels flag is the
+        # mechanism: regions stay, but no node markers / text).
+        show_labels = cfg.label_style != "none"
         pos = {n: G.nodes[n].get("pos") for n in G.nodes()}
         if all(p is not None for p in pos.values()):
-            return build_map(G, seed=seed, pos=pos, show_labels=True)
-        return build_map(G, seed=seed, show_labels=True)
+            return build_map(
+                G,
+                seed=seed,
+                pos=pos,
+                show_labels=show_labels,
+                label_style=cfg.label_style,
+            )
+        return build_map(
+            G,
+            seed=seed,
+            show_labels=show_labels,
+            label_style=cfg.label_style,
+        )
 
 
 def _chromatic_number(G: nx.Graph) -> int:

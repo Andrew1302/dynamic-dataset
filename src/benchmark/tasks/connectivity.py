@@ -54,10 +54,22 @@ class ConnectivityTask(BenchmarkTask):
             "through the corridors of this maze?\nA:"
         )
 
-    def disguise(self, G: nx.Graph, seed: int) -> Maze:
+    def disguise(
+        self,
+        G: nx.Graph,
+        seed: int,
+        config: RenderConfig | None = None,
+    ) -> Maze:
+        cfg = config if config is not None else RenderConfig()
+        # label_style="none" → no decoy node markers in the maze. The
+        # entrance and exit are always painted, since the prompt asks
+        # for "green cell" → "red cell".
+        highlight = cfg.label_style != "none"
         return build_maze(
             G,
             seed=seed,
             entrance=G.graph["entrance"],
             exit=G.graph["exit"],
+            highlight_all_nodes=highlight,
+            label_style=cfg.label_style,
         )

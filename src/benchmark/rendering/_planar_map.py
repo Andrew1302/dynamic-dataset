@@ -22,11 +22,14 @@ from matplotlib.patches import Polygon as MplPolygon
 from PIL import Image
 from scipy.spatial import ConvexHull, Voronoi
 
+from .config import LabelStyle, node_label
+
 
 def render_planar_map(
     G: nx.Graph,
     pos: dict,
     show_labels: bool = False,
+    label_style: LabelStyle = "numeric",
 ) -> Image.Image:
     polygons = build_polygons(G, pos)
 
@@ -45,7 +48,7 @@ def render_planar_map(
         if show_labels:
             cx, cy = pos[v]
             ax.text(
-                cx, cy, str(v),
+                cx, cy, node_label(v, label_style),
                 ha="center", va="center",
                 fontsize=10, fontweight="bold", color="#1a1a1a",
                 bbox=dict(

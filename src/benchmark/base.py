@@ -81,7 +81,12 @@ class BenchmarkTask:
     def disguise_prompt(self) -> str:
         raise NotImplementedError
 
-    def disguise(self, G: nx.Graph, seed: int) -> Disguise:
+    def disguise(
+        self,
+        G: nx.Graph,
+        seed: int,
+        config: RenderConfig | None = None,
+    ) -> Disguise:
         raise NotImplementedError
 
     # --- concrete entry point ------------------------------------------------
@@ -101,22 +106,31 @@ class BenchmarkTask:
         G.graph["n_edges"] = int(G.number_of_edges())
 
         direct_prompt = self.direct_prompt(G, cfg)
+        disguise_prompt = self.disguise_prompt()
         if include_adjacency_matrix:
             matrix = format_adjacency(G, cfg.label_style)
-            # Insert the matrix before the trailing "A:" so the model
-            # sees it as context rather than as part of its answer.
-            block = f"Adjacency matrix:\n{matrix}\n"
-            if direct_prompt.endswith("\nA:"):
-                direct_prompt = direct_prompt[: -len("\nA:")] + f"\n\n{block}\nA:"
-            else:
-                direct_prompt = f"{direct_prompt}\n\n{block}"
+            direct_block = f"Adjacency matrix:\n{matrix}\n"
+            disguise_block = (
+                f"Adjacency matrix from the underlying graph:\n{matrix}\n"
+            )
+            direct_prompt = _inject_block(direct_prompt, direct_block)
+            disguise_prompt = _inject_block(disguise_prompt, disguise_block)
 
         return {
             "direct_prompt": direct_prompt,
             "direct_image": self.render_direct(G, cfg),
-            "disguise_prompt": self.disguise_prompt(),
-            "disguise_image": self.disguise(G, seed).render(),
+            "disguise_prompt": disguise_prompt,
+            "disguise_image": self.disguise(G, seed, cfg).render(),
             "answer": self.solve(G),
             "n_vertices": int(G.graph["n_vertices"]),
             "n_edges": int(G.graph["n_edges"]),
         }
+
+
+def _inject_block(prompt: str, block: str) -> str:
+    """Insert *block* before a trailing ``\\nA:`` (so it stays context,
+    not part of the answer). Falls back to appending if the prompt does
+    not end in the GraphQA-style ``A:`` marker."""
+    if prompt.endswith("\nA:"):
+        return prompt[: -len("\nA:")] + f"\n\n{block}\nA:"
+    return f"{prompt}\n\n{block}"

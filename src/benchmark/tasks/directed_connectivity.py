@@ -62,10 +62,19 @@ class DirectedConnectivityTask(BenchmarkTask):
             "possible to travel from the green cell to the red cell?\nA:"
         )
 
-    def disguise(self, G: nx.DiGraph, seed: int) -> DirectedMaze:
+    def disguise(
+        self,
+        G: nx.DiGraph,
+        seed: int,
+        config: RenderConfig | None = None,
+    ) -> DirectedMaze:
+        cfg = config if config is not None else RenderConfig()
+        highlight = cfg.label_style != "none"
         return build_directed_maze(
             G,
             seed=seed,
             entrance=G.graph["entrance"],
             exit=G.graph["exit"],
+            highlight_all_nodes=highlight,
+            label_style=cfg.label_style,
         )

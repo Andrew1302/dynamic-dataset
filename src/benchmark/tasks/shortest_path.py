@@ -64,5 +64,20 @@ class ShortestPathTask(BenchmarkTask):
             "the end city?\nA:"
         )
 
-    def disguise(self, G: nx.DiGraph, seed: int) -> LatinAmericaMap:
-        return build_latin_america_map(G, seed=seed)
+    def disguise(
+        self,
+        G: nx.DiGraph,
+        seed: int,
+        config: RenderConfig | None = None,
+    ) -> LatinAmericaMap:
+        cfg = config if config is not None else RenderConfig()
+        # label_style="none" → hide intermediate city markers and their
+        # integer ID labels. Endpoints (start/end) stay because the
+        # prompt explicitly references them.
+        show_intermediate = cfg.label_style != "none"
+        return build_latin_america_map(
+            G,
+            seed=seed,
+            label_style=cfg.label_style,
+            show_intermediate_nodes=show_intermediate,
+        )

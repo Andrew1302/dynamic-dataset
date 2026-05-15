@@ -18,6 +18,7 @@ import networkx as nx
 from PIL import Image
 
 from ._planar_map import render_planar_map
+from .config import LabelStyle
 
 
 @dataclass(frozen=True)
@@ -27,9 +28,15 @@ class Map:
     G: nx.Graph
     pos: dict
     show_labels: bool = False
+    label_style: LabelStyle = "numeric"
 
     def render(self) -> Image.Image:
-        return render_planar_map(self.G, self.pos, show_labels=self.show_labels)
+        return render_planar_map(
+            self.G,
+            self.pos,
+            show_labels=self.show_labels,
+            label_style=self.label_style,
+        )
 
 
 def build_map(
@@ -37,10 +44,11 @@ def build_map(
     seed: int = 42,  # retained for API compatibility; unused
     show_labels: bool = False,
     pos: dict | None = None,
+    label_style: LabelStyle = "numeric",
 ) -> Map:
     if pos is None:
         pos = {n: G.nodes[n]["pos"] for n in G.nodes()}
-    return Map(G=G, pos=pos, show_labels=show_labels)
+    return Map(G=G, pos=pos, show_labels=show_labels, label_style=label_style)
 
 
 def render_map(
@@ -48,6 +56,9 @@ def render_map(
     seed: int = 42,
     show_labels: bool = False,
     pos: dict | None = None,
+    label_style: LabelStyle = "numeric",
 ) -> Image.Image:
     """Convenience: ``build_map(...).render()``."""
-    return build_map(G, seed=seed, show_labels=show_labels, pos=pos).render()
+    return build_map(
+        G, seed=seed, show_labels=show_labels, pos=pos, label_style=label_style
+    ).render()

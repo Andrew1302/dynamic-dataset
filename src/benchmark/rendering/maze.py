@@ -45,7 +45,9 @@ from io import BytesIO
 
 import networkx as nx
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
+
+from .config import LabelStyle, node_label
 
 _WALL = np.uint8(0)
 _CORRIDOR = np.uint8(1)
@@ -70,6 +72,7 @@ class Maze:
     exit: int
     cell_px: int = 14
     highlight_all_nodes: bool = True
+    label_style: LabelStyle = "numeric"
 
     def render(self) -> Image.Image:
         other = (
@@ -77,12 +80,17 @@ class Maze:
             if self.highlight_all_nodes
             else []
         )
+        labels: dict[tuple[int, int], str] = {}
+        if self.highlight_all_nodes and self.label_style != "none":
+            for node_id, cell in self.seeds.items():
+                labels[cell] = node_label(node_id, self.label_style)
         return _render_image(
             self.maze,
             self.cell_px,
             self.seeds[self.entrance],
             self.seeds[self.exit],
             other,
+            labels,
         )
 
 
@@ -94,6 +102,7 @@ def build_maze(
     cell_px: int = 14,
     block: int = 7,
     highlight_all_nodes: bool = True,
+    label_style: LabelStyle = "numeric",
 ) -> Maze:
     """Carve a maze from a lattice subgraph *G*.
 
@@ -131,6 +140,7 @@ def build_maze(
         exit=exit,
         cell_px=cell_px,
         highlight_all_nodes=highlight_all_nodes,
+        label_style=label_style,
     )
 
 
@@ -142,10 +152,11 @@ def render_maze(
     cell_px: int = 14,
     block: int = 7,
     highlight_all_nodes: bool = True,
+    label_style: LabelStyle = "numeric",
 ) -> Image.Image:
     """Convenience: ``build_maze(...).render()``."""
     return build_maze(
-        G, seed, entrance, exit, cell_px, block, highlight_all_nodes
+        G, seed, entrance, exit, cell_px, block, highlight_all_nodes, label_style
     ).render()
 
 
@@ -371,6 +382,7 @@ def _render_image(
     entrance: tuple[int, int],
     exit_: tuple[int, int],
     other_seeds: list[tuple[int, int]],
+    labels: dict[tuple[int, int], str] | None = None,
 ) -> Image.Image:
     h, w = maze.shape
     img = Image.new("RGB", (w * cell_px, h * cell_px), _C_WALL)
@@ -386,12 +398,48 @@ def _render_image(
         _paint_cell(draw, r, c, cell_px, _C_NODE)
     _paint_cell(draw, entrance[0], entrance[1], cell_px, _C_ENTRANCE)
     _paint_cell(draw, exit_[0], exit_[1], cell_px, _C_EXIT)
+    if labels:
+        font = _label_font(cell_px)
+        for (r, c), text in labels.items():
+            _paint_label(draw, r, c, cell_px, text, font)
     draw.rectangle([0, 0, w * cell_px - 1, h * cell_px - 1], outline=_C_BORDER, width=1)
 
     buf = BytesIO()
     img.save(buf, format="PNG")
     buf.seek(0)
     return Image.open(buf).copy()
+
+
+def _label_font(cell_px: int) -> ImageFont.ImageFont:
+    """Pick a font size that fits a 2-character label inside a single cell."""
+    size = max(8, int(cell_px * 0.55))
+    for name in ("arial.ttf", "DejaVuSans-Bold.ttf", "DejaVuSans.ttf"):
+        try:
+            return ImageFont.truetype(name, size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+def _paint_label(
+    draw: ImageDraw.ImageDraw,
+    r: int,
+    c: int,
+    cell_px: int,
+    text: str,
+    font: ImageFont.ImageFont,
+) -> None:
+    cx = c * cell_px + cell_px / 2
+    cy = r * cell_px + cell_px / 2
+    bbox = draw.textbbox((0, 0), text, font=font)
+    tw = bbox[2] - bbox[0]
+    th = bbox[3] - bbox[1]
+    draw.text(
+        (cx - tw / 2 - bbox[0], cy - th / 2 - bbox[1]),
+        text,
+        fill=(0, 0, 0),
+        font=font,
+    )
 
 
 def _paint_cell(
