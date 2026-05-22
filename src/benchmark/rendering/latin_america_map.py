@@ -34,31 +34,59 @@ import cartopy.feature as cfeature
 from .config import LabelStyle, node_label
 
 
-# (name, lat, lon) — the pool size (21) is one more than the maximum n,
-# so farthest-first sampling always has a real choice when picking the
-# last city.
+# (name, lat, lon) — the pool is sized so that even the largest sweep
+# (target_edges=35 in graph_bench_sweep_edges → up to n=39 in the
+# rejection-sampler in tools/prepare_dynamic_graph_benchmark.py) still
+# leaves at least one unused entry for farthest-first to choose from.
 _CITIES: tuple[tuple[str, float, float], ...] = (
-    ("Tijuana",         32.50, -117.00),
-    ("Monterrey",       25.69, -100.32),
-    ("Mexico City",     19.43,  -99.13),
-    ("Mérida",          20.97,  -89.62),
-    ("Havana",          23.13,  -82.39),
-    ("Guatemala City",  14.63,  -90.51),
-    ("Santo Domingo",   18.47,  -69.90),
-    ("Caracas",         10.49,  -66.90),
-    ("Bogotá",           4.71,  -74.07),
-    ("Quito",           -0.18,  -78.47),
-    ("Manaus",          -3.10,  -60.03),
-    ("Recife",          -8.05,  -34.88),
-    ("Lima",           -12.05,  -77.04),
-    ("La Paz",         -16.50,  -68.15),
-    ("Brasília",       -15.79,  -47.88),
-    ("Salvador",       -12.97,  -38.51),
-    ("São Paulo",      -23.55,  -46.63),
-    ("Asunción",       -25.30,  -57.63),
-    ("Santiago",       -33.45,  -70.66),
-    ("Buenos Aires",   -34.61,  -58.38),
-    ("Punta Arenas",   -53.16,  -70.92),
+    ("Tijuana",                32.50, -117.00),
+    ("Monterrey",              25.69, -100.32),
+    ("Guadalajara",            20.66, -103.35),
+    ("Mexico City",            19.43,  -99.13),
+    ("Oaxaca",                 17.07,  -96.72),
+    ("Mérida",                 20.97,  -89.62),
+    ("Cancún",                 21.16,  -86.85),
+    ("Havana",                 23.13,  -82.39),
+    ("Kingston",               17.97,  -76.79),
+    ("San Juan",               18.45,  -66.07),
+    ("Guatemala City",         14.63,  -90.51),
+    ("Tegucigalpa",            14.07,  -87.19),
+    ("Managua",                12.13,  -86.25),
+    ("San José",                9.93,  -84.08),
+    ("Panama City",             8.97,  -79.53),
+    ("Santo Domingo",          18.47,  -69.90),
+    ("Maracaibo",              10.65,  -71.65),
+    ("Caracas",                10.49,  -66.90),
+    ("Medellín",                6.24,  -75.58),
+    ("Bogotá",                  4.71,  -74.07),
+    ("Cali",                    3.45,  -76.53),
+    ("Quito",                  -0.18,  -78.47),
+    ("Guayaquil",              -2.17,  -79.92),
+    ("Belém",                  -1.46,  -48.50),
+    ("Manaus",                 -3.10,  -60.03),
+    ("Fortaleza",              -3.73,  -38.52),
+    ("Recife",                 -8.05,  -34.88),
+    ("Lima",                  -12.05,  -77.04),
+    ("Cusco",                 -13.53,  -71.97),
+    ("Salvador",              -12.97,  -38.51),
+    ("Brasília",              -15.79,  -47.88),
+    ("La Paz",                -16.50,  -68.15),
+    ("Santa Cruz de la Sierra",-17.78, -63.18),
+    ("Belo Horizonte",        -19.92,  -43.94),
+    ("Rio de Janeiro",        -22.91,  -43.17),
+    ("São Paulo",             -23.55,  -46.63),
+    ("Curitiba",              -25.43,  -49.27),
+    ("Asunción",              -25.30,  -57.63),
+    ("Porto Alegre",          -30.03,  -51.22),
+    ("Córdoba",               -31.42,  -64.18),
+    ("Mendoza",               -32.89,  -68.83),
+    ("Valparaíso",            -33.05,  -71.62),
+    ("Santiago",              -33.45,  -70.66),
+    ("Montevideo",            -34.90,  -56.19),
+    ("Buenos Aires",          -34.61,  -58.38),
+    ("Concepción",            -36.83,  -73.05),
+    ("Bariloche",             -41.13,  -71.31),
+    ("Punta Arenas",          -53.16,  -70.92),
 )
 
 _EXTENT = (-122.0, -30.0, -58.0, 36.0)
@@ -108,11 +136,11 @@ def build_latin_america_map(
 ) -> LatinAmericaMap:
     """Sample cities for *G*'s vertices and pack a renderable disguise.
 
-    Cities are picked from the 21-city pool by farthest-first sampling
-    (high pairwise spread, even at the maximum n=20), then sorted by
-    latitude descending so node 0 = northernmost and node n-1 =
-    southernmost. The DAG's source/sink end up at the extremes of the
-    map, matching the visual N→S flow.
+    Cities are picked from the city pool by farthest-first sampling
+    (high pairwise spread), then sorted by latitude descending so
+    node 0 = northernmost and node n-1 = southernmost. The DAG's
+    source/sink end up at the extremes of the map, matching the
+    visual N→S flow.
     """
     rng = np.random.default_rng(seed)
     n = G.number_of_nodes()
