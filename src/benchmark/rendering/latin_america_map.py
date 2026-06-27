@@ -117,7 +117,7 @@ class LatinAmericaMap:
     label_style: LabelStyle = "numeric"
     show_intermediate_nodes: bool = True
 
-    def render(self) -> Image.Image:
+    def render(self, pdf_path: str | None = None) -> Image.Image:
         return _render_image(
             self.edges,
             self.cities,
@@ -125,6 +125,7 @@ class LatinAmericaMap:
             self.sink,
             label_style=self.label_style,
             show_intermediate_nodes=self.show_intermediate_nodes,
+            pdf_path=pdf_path,
         )
 
 
@@ -203,6 +204,7 @@ def _render_image(
     sink: int,
     label_style: LabelStyle = "numeric",
     show_intermediate_nodes: bool = True,
+    pdf_path: str | None = None,
 ) -> Image.Image:
     n = len(cities)
     coords = {i: (cities[i][1], cities[i][2]) for i in range(n)}  # (lat, lon)
@@ -317,6 +319,8 @@ def _render_image(
     )
     fig.tight_layout()
 
+    if pdf_path is not None:
+        fig.savefig(pdf_path, format="pdf", bbox_inches="tight", facecolor="white")
     buf = BytesIO()
     fig.savefig(buf, format="png", dpi=_DPI, bbox_inches="tight", facecolor="white")
     plt.close(fig)
@@ -329,10 +333,11 @@ def render_latin_america_map(
     seed: int,
     label_style: LabelStyle = "numeric",
     show_intermediate_nodes: bool = True,
+    pdf_path: str | None = None,
 ) -> Image.Image:
     return build_latin_america_map(
         G,
         seed=seed,
         label_style=label_style,
         show_intermediate_nodes=show_intermediate_nodes,
-    ).render()
+    ).render(pdf_path=pdf_path)

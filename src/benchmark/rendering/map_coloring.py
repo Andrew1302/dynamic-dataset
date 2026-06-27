@@ -30,12 +30,13 @@ class Map:
     show_labels: bool = False
     label_style: LabelStyle = "numeric"
 
-    def render(self) -> Image.Image:
+    def render(self, pdf_path: str | None = None) -> Image.Image:
         return render_planar_map(
             self.G,
             self.pos,
             show_labels=self.show_labels,
             label_style=self.label_style,
+            pdf_path=pdf_path,
         )
 
 
@@ -57,8 +58,9 @@ def render_map(
     show_labels: bool = False,
     pos: dict | None = None,
     label_style: LabelStyle = "numeric",
+    pdf_path: str | None = None,
 ) -> Image.Image:
     """Convenience: ``build_map(...).render()``."""
     return build_map(
         G, seed=seed, show_labels=show_labels, pos=pos, label_style=label_style
-    ).render()
+    ).render(pdf_path=pdf_path)

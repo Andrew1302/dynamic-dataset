@@ -1,6 +1,15 @@
-"""Connectivity-check task paired with the maze disguise."""
+"""Connectivity-check task paired with the maze disguise.
+
+.. deprecated::
+    The undirected ``connectivity`` task is deprecated and no longer part
+    of the default demo task set. The directed variant
+    (:mod:`directed_connectivity`) covers the same evaluation surface on
+    a directed graph and should be used instead.
+"""
 
 from __future__ import annotations
+
+import warnings
 
 import networkx as nx
 import numpy as np
@@ -14,6 +23,14 @@ from ..rendering.maze import Maze
 
 class ConnectivityTask(BenchmarkTask):
     name = "connectivity"
+
+    def __init__(self) -> None:
+        warnings.warn(
+            "The 'connectivity' benchmark task is deprecated; use "
+            "'directed_connectivity' instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
     def sample_graph(
         self,
@@ -40,13 +57,18 @@ class ConnectivityTask(BenchmarkTask):
         return f"Q: Is there a path from node {u_lbl} to node {v_lbl}?\nA:"
 
     def render_direct(
-        self, G: nx.Graph, config: RenderConfig | None = None
+        self,
+        G: nx.Graph,
+        config: RenderConfig | None = None,
+        pdf_path: str | None = None,
     ) -> Image.Image:
         highlights = {
             G.graph["entrance"]: "#58CF76",
             G.graph["exit"]: "#EB5E5E",
         }
-        return render_graph(G, highlights=highlights, config=config)
+        return render_graph(
+            G, highlights=highlights, config=config, pdf_path=pdf_path,
+        )
 
     def disguise_prompt(self) -> str:
         return (

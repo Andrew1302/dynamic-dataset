@@ -78,7 +78,9 @@ class DirectedMaze:
     highlight_all_nodes: bool = True
     label_style: LabelStyle = "numeric"
 
-    def render(self) -> Image.Image:
+    def render(
+        self, pdf_path: str | None = None, pdf_dpi: int = 220
+    ) -> Image.Image:
         decoy_seeds: list[Cell] = []
         labels: dict[Cell, str] = {}
         if self.highlight_all_nodes:
@@ -87,7 +89,7 @@ class DirectedMaze:
                     decoy_seeds.append(cell)
                 if self.label_style != "none":
                     labels[cell] = node_label(node_id, self.label_style)
-        return _render_image(
+        img = _render_image(
             self.maze,
             self.cell_px,
             self.seeds[self.entrance],
@@ -96,6 +98,9 @@ class DirectedMaze:
             self.arrows,
             labels,
         )
+        if pdf_path is not None:
+            img.save(pdf_path, format="PDF", resolution=float(pdf_dpi))
+        return img
 
 
 @dataclass(frozen=True)
@@ -281,10 +286,12 @@ def render_directed_maze(
     block: int = 7,
     highlight_all_nodes: bool = True,
     label_style: LabelStyle = "numeric",
+    pdf_path: str | None = None,
+    pdf_dpi: int = 220,
 ) -> Image.Image:
     return build_directed_maze(
         G, seed, entrance, exit, cell_px, block, highlight_all_nodes, label_style
-    ).render()
+    ).render(pdf_path=pdf_path, pdf_dpi=pdf_dpi)
 
 
 def _directed_passable(G: nx.DiGraph, a: int, b: int) -> bool:

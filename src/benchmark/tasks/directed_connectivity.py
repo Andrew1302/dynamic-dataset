@@ -47,13 +47,18 @@ class DirectedConnectivityTask(BenchmarkTask):
         )
 
     def render_direct(
-        self, G: nx.DiGraph, config: RenderConfig | None = None
+        self,
+        G: nx.DiGraph,
+        config: RenderConfig | None = None,
+        pdf_path: str | None = None,
     ) -> Image.Image:
         highlights = {
             G.graph["entrance"]: "#58CF76",
             G.graph["exit"]: "#EB5E5E",
         }
-        return render_graph(G, highlights=highlights, arrowsize=22, config=config)
+        return render_graph(
+            G, highlights=highlights, arrowsize=22, config=config, pdf_path=pdf_path,
+        )
 
     def disguise_prompt(self) -> str:
         return (

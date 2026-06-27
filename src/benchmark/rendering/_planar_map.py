@@ -30,6 +30,7 @@ def render_planar_map(
     pos: dict,
     show_labels: bool = False,
     label_style: LabelStyle = "numeric",
+    pdf_path: str | None = None,
 ) -> Image.Image:
     polygons = build_polygons(G, pos)
 
@@ -63,6 +64,8 @@ def render_planar_map(
     ax.axis("off")
     plt.tight_layout(pad=0.3)
 
+    if pdf_path is not None:
+        fig.savefig(pdf_path, format="pdf", bbox_inches="tight", facecolor="white")
     buf = BytesIO()
     fig.savefig(buf, format="png", dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)

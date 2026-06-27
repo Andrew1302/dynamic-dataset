@@ -14,6 +14,12 @@ Sweep mode (``--constraint nodes|edges``) generates many samples per
 target value with the other axis left free; per-sample metadata
 (``n_vertices``, ``n_edges``, requested value) is written alongside the
 five artifacts and dumped to ``manifest.jsonl`` for downstream binning.
+
+Demo / presentation mode (``--demo``) is a convenience preset for
+generating a LaTeX-ready artifact bundle: a 2-per-page PDF report plus
+an ``assets/`` folder of per-image PDFs that drop straight into
+``\\includegraphics{}``. See ``src/benchmark/README.md`` for the full
+recipe.
 """
 
 from __future__ import annotations
@@ -25,7 +31,13 @@ import sys
 
 from .base import Sample, get_all_tasks, get_task
 from .rendering import RenderConfig
-from .report import build_pdf
+from .report import build_pdf, build_pdf_compact
+
+
+# Tasks used by the ``--demo`` preset. The undirected ``connectivity``
+# task is deprecated and intentionally excluded.
+_DEMO_TASKS: tuple[str, ...] = ("coloring", "directed_connectivity", "shortest_path")
+_DEMO_DIFFICULTIES: tuple[str, ...] = ("easy", "medium", "hard")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -47,6 +59,56 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("-o", "--output-dir", default="out/benchmark")
     parser.add_argument("--pdf", action="store_true", help="Also produce report.pdf.")
+
+    # Presentation / LaTeX-friendly demo mode.
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        help=(
+            "Convenience preset: 3 tasks (coloring, directed_connectivity, "
+            "shortest_path), 2 samples per difficulty (= 6 per task, "
+            "18 total), 2-per-page report.pdf, and assets/ folder of "
+            "per-image PDFs. Equivalent to --samples-per-difficulty 2 "
+            "--two-per-page --assets --pdf with the demo task set."
+        ),
+    )
+    parser.add_argument(
+        "--samples-per-difficulty",
+        type=int,
+        default=None,
+        help=(
+            "Generate N samples for each of easy / medium / hard for "
+            "every selected task. Overrides -n / --difficulty. Default "
+            "when --demo is set: 2."
+        ),
+    )
+    parser.add_argument(
+        "--assets",
+        action="store_true",
+        help=(
+            "Also write a per-image PDF for every direct and disguise "
+            "view into <output-dir>/assets/. Matplotlib-backed "
+            "renderers produce vector PDFs; the directed-maze renderer "
+            "produces a raster image wrapped in PDF."
+        ),
+    )
+    parser.add_argument(
+        "--two-per-page",
+        action="store_true",
+        help=(
+            "Pack two questions per PDF page in report.pdf. Implies "
+            "--pdf."
+        ),
+    )
+    parser.add_argument(
+        "--asset-dpi",
+        type=int,
+        default=220,
+        help=(
+            "DPI for PIL-based renderers (currently directed_maze) when "
+            "wrapping their PNG output in a PDF container."
+        ),
+    )
 
     # Rendering knobs (ablation axes).
     parser.add_argument(
@@ -116,12 +178,36 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     if args.constraint is not None and args.constraint_values is None:
         parser.error("--constraint requires --constraint-values")
+
+    if args.demo:
+        # Preset: only apply demo defaults when the user did not opt in
+        # to an explicit value, so individual demo flags remain
+        # overrideable.
+        if args.samples_per_difficulty is None:
+            args.samples_per_difficulty = 2
+        # Only narrow --tasks to the demo set if the user accepted the
+        # all-tasks default.
+        if set(args.tasks) == set(get_all_tasks().keys()):
+            args.tasks = [
+                t for t in _DEMO_TASKS if t in get_all_tasks()
+            ]
+        args.two_per_page = True
+        args.assets = True
+        args.pdf = True
+
+    if args.two_per_page:
+        args.pdf = True
     return args
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     os.makedirs(args.output_dir, exist_ok=True)
+    assets_dir = (
+        os.path.join(args.output_dir, "assets") if args.assets else None
+    )
+    if assets_dir is not None:
+        os.makedirs(assets_dir, exist_ok=True)
 
     cfg = RenderConfig(
         label_style=args.label_style,
@@ -132,27 +218,79 @@ def main(argv: list[str] | None = None) -> int:
     if args.constraint is not None:
         return _run_sweep(args, cfg)
 
+    if args.samples_per_difficulty is not None:
+        plan = _difficulty_mix_plan(args.tasks, args.samples_per_difficulty)
+    else:
+        plan = [
+            (i + 1, task_name, args.difficulty)
+            for i in range(args.num_samples)
+            for task_name in args.tasks
+        ]
+
     collected: list[tuple[str, str, int, Sample]] = []
-    for i in range(args.num_samples):
-        for task_name in args.tasks:
-            task = get_task(task_name)()
-            seed = args.seed + i * len(args.tasks) + hash(task_name) % 1000
-            sample = task.generate(
-                seed=seed,
-                difficulty=args.difficulty,
-                config=cfg,
-                include_adjacency_matrix=args.include_adjacency_matrix,
-            )
-            _write_sample(args.output_dir, i + 1, task_name, sample)
-            collected.append((task_name, args.difficulty, seed, sample))
-            print(f"[sample {i + 1}] task={task_name} answer={sample['answer']}")
+    for idx, (sample_idx, task_name, difficulty) in enumerate(plan):
+        task = get_task(task_name)()
+        seed = args.seed + idx * 7919 + hash(task_name) % 1000
+        direct_pdf, disguise_pdf = _asset_paths(
+            assets_dir, sample_idx, task_name, difficulty
+        )
+        sample = task.generate(
+            seed=seed,
+            difficulty=difficulty,
+            config=cfg,
+            include_adjacency_matrix=args.include_adjacency_matrix,
+            direct_pdf_path=direct_pdf,
+            disguise_pdf_path=disguise_pdf,
+        )
+        _write_sample(args.output_dir, sample_idx, task_name, sample)
+        collected.append((task_name, difficulty, seed, sample))
+        print(
+            f"[sample {sample_idx}] task={task_name} "
+            f"difficulty={difficulty} answer={sample['answer']}"
+        )
 
     if args.pdf:
         pdf_path = os.path.join(args.output_dir, "report.pdf")
-        build_pdf(collected, pdf_path)
+        if args.two_per_page:
+            build_pdf_compact(collected, pdf_path)
+        else:
+            build_pdf(collected, pdf_path)
         print(f"PDF written to {pdf_path}")
+    if assets_dir is not None:
+        print(f"Per-image PDFs written to {assets_dir}")
 
     return 0
+
+
+def _difficulty_mix_plan(
+    tasks: list[str], samples_per_difficulty: int
+) -> list[tuple[int, str, str]]:
+    """Return ``[(sample_idx, task, difficulty), ...]`` covering N samples
+    of each of easy/medium/hard for every task, in a deterministic order.
+    """
+    plan: list[tuple[int, str, str]] = []
+    idx = 0
+    for task_name in tasks:
+        for difficulty in _DEMO_DIFFICULTIES:
+            for _ in range(samples_per_difficulty):
+                idx += 1
+                plan.append((idx, task_name, difficulty))
+    return plan
+
+
+def _asset_paths(
+    assets_dir: str | None,
+    sample_idx: int,
+    task_name: str,
+    difficulty: str,
+) -> tuple[str | None, str | None]:
+    if assets_dir is None:
+        return None, None
+    stem = f"sample_{sample_idx:02d}_{task_name}_{difficulty}"
+    return (
+        os.path.join(assets_dir, f"{stem}_direct.pdf"),
+        os.path.join(assets_dir, f"{stem}_disguise.pdf"),
+    )
 
 
 def _run_sweep(args: argparse.Namespace, cfg: RenderConfig) -> int:

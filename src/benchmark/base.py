@@ -31,9 +31,14 @@ class Sample(TypedDict):
 
 @runtime_checkable
 class Disguise(Protocol):
-    """Anything that knows how to draw itself into a PIL image."""
+    """Anything that knows how to draw itself into a PIL image.
 
-    def render(self) -> Image.Image: ...
+    Implementations may accept ``pdf_path`` to also persist a vector
+    (matplotlib-backed) or raster-wrapped (PIL-backed) PDF copy alongside
+    the returned ``PIL.Image``.
+    """
+
+    def render(self, pdf_path: str | None = None) -> Image.Image: ...
 
 
 _registry: dict[str, type["BenchmarkTask"]] = {}
@@ -74,7 +79,10 @@ class BenchmarkTask:
         raise NotImplementedError
 
     def render_direct(
-        self, G: nx.Graph, config: RenderConfig | None = None
+        self,
+        G: nx.Graph,
+        config: RenderConfig | None = None,
+        pdf_path: str | None = None,
     ) -> Image.Image:
         raise NotImplementedError
 
@@ -98,6 +106,8 @@ class BenchmarkTask:
         config: RenderConfig | None = None,
         include_adjacency_matrix: bool = False,
         node_count: int | None = None,
+        direct_pdf_path: str | None = None,
+        disguise_pdf_path: str | None = None,
     ) -> Sample:
         cfg = config if config is not None else RenderConfig()
         rng = np.random.default_rng(seed)
@@ -118,9 +128,11 @@ class BenchmarkTask:
 
         return {
             "direct_prompt": direct_prompt,
-            "direct_image": self.render_direct(G, cfg),
+            "direct_image": self.render_direct(G, cfg, pdf_path=direct_pdf_path),
             "disguise_prompt": disguise_prompt,
-            "disguise_image": self.disguise(G, seed, cfg).render(),
+            "disguise_image": self.disguise(G, seed, cfg).render(
+                pdf_path=disguise_pdf_path
+            ),
             "answer": self.solve(G),
             "n_vertices": int(G.graph["n_vertices"]),
             "n_edges": int(G.graph["n_edges"]),

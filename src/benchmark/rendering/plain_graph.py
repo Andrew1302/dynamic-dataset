@@ -53,6 +53,7 @@ def render_graph(
     arrowsize: int = 10,
     weighted: bool = False,
     config: RenderConfig | None = None,
+    pdf_path: str | None = None,
 ) -> Image.Image:
     """Render *G* to a square PIL image.
 
@@ -177,6 +178,8 @@ def render_graph(
     ax.margins(0.12 if weighted else 0.08)
     ax.set_axis_off()
 
+    if pdf_path is not None:
+        fig.savefig(pdf_path, format="pdf", bbox_inches="tight", facecolor="white")
     buf = BytesIO()
     fig.savefig(buf, format="png", dpi=120, bbox_inches="tight", facecolor="white")
     plt.close(fig)

@@ -44,14 +44,18 @@ class ShortestPathTask(BenchmarkTask):
         )
 
     def render_direct(
-        self, G: nx.DiGraph, config: RenderConfig | None = None
+        self,
+        G: nx.DiGraph,
+        config: RenderConfig | None = None,
+        pdf_path: str | None = None,
     ) -> Image.Image:
         highlights = {
             G.graph["source"]: "#1D9E75",
             G.graph["sink"]: "#C2185B",
         }
         return render_graph(
-            G, highlights=highlights, arrowsize=22, weighted=True, config=config
+            G, highlights=highlights, arrowsize=22, weighted=True,
+            config=config, pdf_path=pdf_path,
         )
 
     def disguise_prompt(self) -> str:

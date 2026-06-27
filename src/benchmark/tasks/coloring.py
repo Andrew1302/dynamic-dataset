@@ -33,9 +33,12 @@ class ColoringTask(BenchmarkTask):
         )
 
     def render_direct(
-        self, G: nx.Graph, config: RenderConfig | None = None
+        self,
+        G: nx.Graph,
+        config: RenderConfig | None = None,
+        pdf_path: str | None = None,
     ) -> Image.Image:
-        return render_graph(G, config=config)
+        return render_graph(G, config=config, pdf_path=pdf_path)
 
     def disguise_prompt(self) -> str:
         return (
