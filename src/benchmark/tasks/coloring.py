@@ -7,7 +7,7 @@ import numpy as np
 from PIL import Image
 
 from ..base import BenchmarkTask
-from ..graph_sampling import coloring_graph
+from ..graph_sampling import chromatic_number, coloring_graph
 from ..rendering import RenderConfig, build_map, render_graph
 from ..rendering.map_coloring import Map
 
@@ -20,11 +20,17 @@ class ColoringTask(BenchmarkTask):
         rng: np.random.Generator,
         difficulty: str,
         node_count: int | None = None,
+        target_chromatic: int | None = None,
     ) -> nx.Graph:
-        return coloring_graph(rng, difficulty, node_count=node_count)
+        return coloring_graph(
+            rng,
+            difficulty,
+            node_count=node_count,
+            target_chromatic=target_chromatic,
+        )
 
     def solve(self, G: nx.Graph) -> str:
-        return str(_chromatic_number(G))
+        return str(chromatic_number(G))
 
     def direct_prompt(self, G: nx.Graph, config: RenderConfig | None = None) -> str:
         return (
@@ -58,6 +64,13 @@ class ColoringTask(BenchmarkTask):
         # mechanism: regions stay, but no node markers / text).
         show_labels = cfg.label_style != "none"
         pos = {n: G.nodes[n].get("pos") for n in G.nodes()}
+        # In special / balanced mode G is a subgraph of a triangulation, so the
+        # map must know the real adjacencies: adjacent regions share a border,
+        # non-adjacent regions are separated by an open-water gap. The default
+        # full-triangulation path leaves ``edges=None`` and renders as before.
+        edges = None
+        if G.graph.get("chromatic_target") is not None:
+            edges = {tuple(sorted(e)) for e in G.edges()}
         if all(p is not None for p in pos.values()):
             return build_map(
                 G,
@@ -65,53 +78,12 @@ class ColoringTask(BenchmarkTask):
                 pos=pos,
                 show_labels=show_labels,
                 label_style=cfg.label_style,
+                edges=edges,
             )
         return build_map(
             G,
             seed=seed,
             show_labels=show_labels,
             label_style=cfg.label_style,
+            edges=edges,
         )
-
-
-def _chromatic_number(G: nx.Graph) -> int:
-    """Exact chromatic number via simple k-coloring backtracking.
-
-    Iterates ``k = 1, 2, …`` and returns the smallest ``k`` for which a
-    valid coloring exists. Fast enough for the benchmark's graph sizes
-    (n ≤ 14).
-    """
-    if G.number_of_nodes() == 0:
-        return 0
-    if G.number_of_edges() == 0:
-        return 1
-
-    nodes = sorted(G.nodes(), key=lambda v: -G.degree(v))
-    adj = {v: set(G.neighbors(v)) for v in G.nodes()}
-
-    for k in range(1, len(nodes) + 1):
-        color: dict[int, int] = {}
-        if _try_color(nodes, adj, color, k, 0):
-            return k
-    return len(nodes)
-
-
-def _try_color(
-    nodes: list,
-    adj: dict,
-    color: dict,
-    k: int,
-    idx: int,
-) -> bool:
-    if idx == len(nodes):
-        return True
-    v = nodes[idx]
-    used = {color[u] for u in adj[v] if u in color}
-    for c in range(k):
-        if c in used:
-            continue
-        color[v] = c
-        if _try_color(nodes, adj, color, k, idx + 1):
-            return True
-        del color[v]
-    return False

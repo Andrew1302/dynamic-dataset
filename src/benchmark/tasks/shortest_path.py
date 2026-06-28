@@ -20,7 +20,9 @@ class ShortestPathTask(BenchmarkTask):
         rng: np.random.Generator,
         difficulty: str,
         node_count: int | None = None,
+        **kwargs,  # task-specific knobs (e.g. target_chromatic) are not supported
     ) -> nx.DiGraph:
+        self._warn_unsupported_kwargs(kwargs)
         return shortest_path_graph(rng, difficulty, node_count=node_count)
 
     def solve(self, G: nx.DiGraph) -> str:

@@ -174,10 +174,39 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Max rejection-sampling attempts per (task, edge target, sample).",
     )
 
+    # Special / balanced coloring mode.
+    parser.add_argument(
+        "--special-coloring",
+        action="store_true",
+        help=(
+            "Balanced coloring mode: force a uniform distribution of the "
+            "chromatic number (the answer) over a target set by construction "
+            "— never by rejection sampling. Restricts the run to the coloring "
+            "task. See --chromatic-values."
+        ),
+    )
+    parser.add_argument(
+        "--chromatic-values",
+        default="2,3,4",
+        help=(
+            "Comma-separated chromatic-number targets for --special-coloring, "
+            "assigned round-robin across samples for an exact-uniform answer "
+            "distribution. Allowed values: 2, 3, 4 (a faithful planar map "
+            "never needs 5 colours — four-color theorem). Default: '2,3,4'."
+        ),
+    )
+
     args = parser.parse_args(argv)
 
     if args.constraint is not None and args.constraint_values is None:
         parser.error("--constraint requires --constraint-values")
+
+    if args.special_coloring:
+        if args.constraint is not None:
+            parser.error("--special-coloring cannot be combined with --constraint")
+        if "coloring" not in get_all_tasks():
+            parser.error("--special-coloring requires the 'coloring' task")
+        args.tasks = ["coloring"]
 
     if args.demo:
         # Preset: only apply demo defaults when the user did not opt in
@@ -218,19 +247,28 @@ def main(argv: list[str] | None = None) -> int:
     if args.constraint is not None:
         return _run_sweep(args, cfg)
 
-    if args.samples_per_difficulty is not None:
+    if args.special_coloring:
+        plan = _special_coloring_plan(
+            args.num_samples, args.difficulty, args.chromatic_values
+        )
+    elif args.samples_per_difficulty is not None:
         plan = _difficulty_mix_plan(args.tasks, args.samples_per_difficulty)
     else:
         plan = [
-            (i + 1, task_name, args.difficulty)
+            (i + 1, task_name, args.difficulty, None)
             for i in range(args.num_samples)
             for task_name in args.tasks
         ]
 
     collected: list[tuple[str, str, int, Sample]] = []
-    for idx, (sample_idx, task_name, difficulty) in enumerate(plan):
+    for idx, (sample_idx, task_name, difficulty, target_chromatic) in enumerate(plan):
         task = get_task(task_name)()
-        seed = args.seed + idx * 7919 + hash(task_name) % 1000
+        # ``idx`` enumerates the flattened plan, so it is unique per
+        # (sample, task) pair — that alone gives each sample a distinct,
+        # decorrelated RNG stream. Using a stable arithmetic offset (no
+        # ``hash()``, which Python salts per process) keeps the same
+        # ``--seed`` fully reproducible across runs.
+        seed = args.seed + idx
         direct_pdf, disguise_pdf = _asset_paths(
             assets_dir, sample_idx, task_name, difficulty
         )
@@ -239,14 +277,16 @@ def main(argv: list[str] | None = None) -> int:
             difficulty=difficulty,
             config=cfg,
             include_adjacency_matrix=args.include_adjacency_matrix,
+            target_chromatic=target_chromatic,
             direct_pdf_path=direct_pdf,
             disguise_pdf_path=disguise_pdf,
         )
         _write_sample(args.output_dir, sample_idx, task_name, sample)
         collected.append((task_name, difficulty, seed, sample))
+        suffix = "" if target_chromatic is None else f" chi_target={target_chromatic}"
         print(
             f"[sample {sample_idx}] task={task_name} "
-            f"difficulty={difficulty} answer={sample['answer']}"
+            f"difficulty={difficulty}{suffix} answer={sample['answer']}"
         )
 
     if args.pdf:
@@ -264,18 +304,40 @@ def main(argv: list[str] | None = None) -> int:
 
 def _difficulty_mix_plan(
     tasks: list[str], samples_per_difficulty: int
-) -> list[tuple[int, str, str]]:
-    """Return ``[(sample_idx, task, difficulty), ...]`` covering N samples
-    of each of easy/medium/hard for every task, in a deterministic order.
+) -> list[tuple[int, str, str, int | None]]:
+    """Return ``[(sample_idx, task, difficulty, target_chromatic), ...]``
+    covering N samples of each of easy/medium/hard for every task, in a
+    deterministic order. ``target_chromatic`` is always ``None`` here.
     """
-    plan: list[tuple[int, str, str]] = []
+    plan: list[tuple[int, str, str, int | None]] = []
     idx = 0
     for task_name in tasks:
         for difficulty in _DEMO_DIFFICULTIES:
             for _ in range(samples_per_difficulty):
                 idx += 1
-                plan.append((idx, task_name, difficulty))
+                plan.append((idx, task_name, difficulty, None))
     return plan
+
+
+def _special_coloring_plan(
+    num_samples: int, difficulty: str, chromatic_values: str
+) -> list[tuple[int, str, str, int | None]]:
+    """Return a balanced coloring plan that assigns chromatic-number targets
+    round-robin across samples, so the realized answer distribution is exactly
+    uniform when ``num_samples`` is a multiple of the number of targets."""
+    values = [int(v) for v in chromatic_values.split(",") if v.strip()]
+    if not values:
+        raise ValueError("--chromatic-values must list at least one integer")
+    bad = [v for v in values if v not in (2, 3, 4)]
+    if bad:
+        raise ValueError(
+            f"--chromatic-values must be within {{2, 3, 4}}; got {bad} "
+            "(a faithful planar map never needs 5 colors)"
+        )
+    return [
+        (i + 1, "coloring", difficulty, values[i % len(values)])
+        for i in range(num_samples)
+    ]
 
 
 def _asset_paths(

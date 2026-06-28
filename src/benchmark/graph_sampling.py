@@ -451,17 +451,32 @@ def coloring_graph(
     rng: np.random.Generator,
     difficulty: str,
     node_count: int | None = None,
+    target_chromatic: int | None = None,
 ) -> nx.Graph:
-    """Return a Delaunay triangulation over random points in the unit square.
+    """Graph for the coloring task.
 
-    Keeping the full triangulation (no edge drops) lets the map-disguise
-    renderer use Voronoi cells directly — adjacency in the Voronoi diagram
-    equals adjacency in the Delaunay graph by duality, so the disguise
-    matches G exactly. Chromatic number is ≤ 4 by the four-color theorem
-    (typically 3 or 4 on small random point sets).
+    **Default** (``target_chromatic=None``): a full Delaunay triangulation
+    over random points in the unit square. Keeping the full triangulation
+    (no edge drops) lets the map-disguise renderer use Voronoi cells directly
+    — adjacency in the Voronoi diagram equals adjacency in the Delaunay graph
+    by duality, so the disguise matches G exactly. Chromatic number is ≤ 4 by
+    the four-color theorem and concentrates on 3–4, so the answer is nearly
+    constant (a weak benchmark signal).
+
+    **Special / "balanced" mode** (``target_chromatic=k``, ``k ∈ {2, 3, 4}``):
+    returns a **subgraph of a Delaunay triangulation** whose chromatic number
+    is *exactly* ``k``, built by construction — never by rejection-sampling
+    until χ matches. Because the kept edges are a subset of the triangulation,
+    the Voronoi cells are unchanged and the map stays faithful: cells of nodes
+    that are not adjacent in G are separated by an open-water gap in the map
+    renderer. This makes the answer distribution fully controllable (e.g.
+    uniform over {2, 3, 4}).
+    Five colors are intentionally unreachable — by the four-color theorem no
+    planar map ever needs more than four.
 
     When ``node_count`` is set, exactly that many points are placed
-    (must be ≥ 3 for a valid triangulation).
+    (must be ≥ 3 for a valid triangulation); ``node_count`` is independent of
+    ``target_chromatic``, so the node-count distribution does not leak χ.
     """
     lo, hi = _COLORING_SIZES[difficulty]
     if node_count is not None:
@@ -473,6 +488,25 @@ def coloring_graph(
     else:
         target = int(rng.integers(lo, hi + 1))
 
+    if target_chromatic is None:
+        full, _triangles = _sample_coloring_triangulation(rng, target)
+        return full if full is not None else _coloring_fallback(target)
+
+    if target_chromatic not in (2, 3, 4):
+        raise ValueError(
+            "coloring_graph: target_chromatic must be one of {2, 3, 4} "
+            "(a faithful planar map never needs 5 colors — four-color "
+            f"theorem), got {target_chromatic}"
+        )
+    return _controlled_coloring_graph(rng, target, target_chromatic)
+
+
+def _sample_coloring_triangulation(
+    rng: np.random.Generator, target: int
+) -> tuple[nx.Graph | None, list[tuple[int, int, int]] | None]:
+    """Sample one connected, well-behaved Delaunay triangulation on ``target``
+    random points. Returns ``(G, triangles)`` with positions stamped on every
+    node, or ``(None, None)`` if no clean point set is found in 80 attempts."""
     for _ in range(80):
         pts = rng.random((target, 2))
         if not _voronoi_well_behaved(pts):
@@ -482,25 +516,29 @@ def coloring_graph(
         except Exception:
             continue
         edges: set[tuple[int, int]] = set()
+        triangles: list[tuple[int, int, int]] = []
         for simplex in tri.simplices:
-            for i, j in ((0, 1), (1, 2), (2, 0)):
-                a, b = int(simplex[i]), int(simplex[j])
-                edges.add((min(a, b), max(a, b)))
+            a, b, c = int(simplex[0]), int(simplex[1]), int(simplex[2])
+            triangles.append((a, b, c))
+            for u, v in ((a, b), (b, c), (c, a)):
+                edges.add((min(u, v), max(u, v)))
 
         G = nx.Graph()
         G.add_nodes_from(range(target))
-        G.add_edges_from(edges)
+        G.add_edges_from(sorted(edges))
         for i in range(target):
             G.nodes[i]["pos"] = (float(pts[i, 0]), float(pts[i, 1]))
 
         if nx.is_connected(G):
             assert nx.check_planarity(G)[0], "Delaunay triangulation must be planar"
-            return G
+            return G, triangles
+    return None, None
 
-    # Fallback: a deterministic cycle on the requested node count. The map
-    # disguise reads ``G.nodes[n]["pos"]`` unconditionally, so we stamp
-    # coordinates onto each node here (evenly spaced on a unit circle)
-    # rather than returning the raw cycle_graph result.
+
+def _coloring_fallback(target: int) -> nx.Graph:
+    """Deterministic cycle fallback when point sampling fails. The map
+    disguise reads ``G.nodes[n]["pos"]`` unconditionally, so coordinates are
+    stamped on each node (evenly spaced on a unit circle)."""
     fallback = nx.cycle_graph(target)
     for i in range(target):
         angle = 2.0 * float(np.pi) * i / max(target, 1)
@@ -509,6 +547,167 @@ def coloring_graph(
             0.5 + 0.4 * float(np.sin(angle)),
         )
     return fallback
+
+
+def _controlled_coloring_graph(
+    rng: np.random.Generator, target: int, k: int
+) -> nx.Graph:
+    """Build a subgraph of a Delaunay triangulation with χ *exactly* ``k``.
+
+    The triangulation T provides the ambient map (Voronoi cells). We keep a
+    planted *k-partite* subset of its edges:
+
+    * **k = 4** — keep all of T. A planar triangulation is 3-colorable iff
+      every vertex has even degree (Eulerian); random Delaunay triangulations
+      are non-Eulerian almost always, so χ(T) = 4. We resample until χ(T) = 4
+      — the dominant outcome, so this is construction, not answer-hunting.
+    * **k ∈ {2, 3}** — label vertices with a proper k-coloring derived from a
+      BFS spanning tree of T and keep exactly the T-edges whose endpoints
+      differ. Spanning-tree edges are always kept ⇒ G is connected; only k
+      labels are used ⇒ χ(G) ≤ k. For k = 3 one vertex of a triangle is
+      recolored to the third label, so a full triangle (odd cycle) survives
+      and forces χ(G) ≥ 3. Every kept edge is a real triangulation edge, so
+      the Voronoi map stays faithful.
+
+    χ(G) is asserted via :func:`chromatic_number` as a constructive safety net
+    (it confirms the build; it never filters random graphs).
+    """
+    full: nx.Graph | None = None
+    triangles: list[tuple[int, int, int]] | None = None
+    for _ in range(60):
+        full, triangles = _sample_coloring_triangulation(rng, target)
+        if full is None:
+            continue
+        if k != 4 or chromatic_number(full) == 4:
+            break
+        full = None
+    if full is None or triangles is None:
+        return _coloring_gadget(target, k)
+
+    if k == 4:
+        G = full
+    else:
+        labels = _bipartition_labels(full)
+        if k == 3:
+            _plant_triangle(labels, triangles)
+        G = nx.Graph()
+        G.add_nodes_from(full.nodes())
+        G.add_edges_from(
+            (u, v) for u, v in full.edges() if labels[u] != labels[v]
+        )
+        for n in full.nodes():
+            G.nodes[n]["pos"] = full.nodes[n]["pos"]
+        assert nx.is_connected(G), "controlled coloring graph must be connected"
+
+    G.graph["chromatic_target"] = k
+    got = chromatic_number(G)
+    assert got == k, f"planted χ={k} but built χ={got}"
+    return G
+
+
+def _bipartition_labels(G: nx.Graph) -> dict[int, int]:
+    """Proper 2-coloring (labels 0/1) of a BFS spanning tree of ``G``. Tree
+    edges always connect differing labels, so the kept cross-label subgraph
+    stays connected. Node/neighbor order is sorted for determinism."""
+    import collections
+
+    labels: dict[int, int] = {}
+    for start in sorted(G.nodes()):
+        if start in labels:
+            continue
+        labels[start] = 0
+        dq = collections.deque([start])
+        while dq:
+            u = dq.popleft()
+            for v in sorted(G.neighbors(u)):
+                if v not in labels:
+                    labels[v] = labels[u] ^ 1
+                    dq.append(v)
+    return labels
+
+
+def _plant_triangle(
+    labels: dict[int, int], triangles: list[tuple[int, int, int]]
+) -> None:
+    """Recolor one vertex of the first triangle to label 2 so all three of its
+    edges become cross-label — a surviving odd cycle that forces χ ≥ 3. Under a
+    2-coloring some pair of the triangle shares a label (pigeonhole); recoloring
+    one of that pair makes exactly one vertex label 2, so no two label-2
+    vertices are adjacent and every spanning-tree edge stays cross-label."""
+    a, b, c = triangles[0]
+    for u, v in ((a, b), (b, c), (c, a)):
+        if labels[u] == labels[v]:
+            labels[u] = 2
+            return
+
+
+def _coloring_gadget(target: int, k: int) -> nx.Graph:
+    """Deterministic exact-χ fallback (used only if triangulation sampling
+    fails). Positions sit on a unit circle. The Voronoi map is not guaranteed
+    faithful for this rare gadget, but χ is exact."""
+    G = nx.Graph()
+    G.add_nodes_from(range(target))
+    if k == 2:
+        G.add_edges_from((i, i + 1) for i in range(target - 1))  # path → χ=2
+    elif k == 3:
+        G.add_edges_from((i, (i + 1) % target) for i in range(target))  # cycle
+        if target % 2 == 0:
+            G.add_edge(0, 2)  # chord → triangle → χ=3
+    else:  # k == 4
+        for i in range(4):
+            for j in range(i + 1, 4):
+                G.add_edge(i, j)  # K4 → χ=4
+        for i in range(4, target):
+            G.add_edge(i, i - 1)  # tail path keeps it 4-colorable
+    for i in range(target):
+        angle = 2.0 * float(np.pi) * i / max(target, 1)
+        G.nodes[i]["pos"] = (
+            0.5 + 0.4 * float(np.cos(angle)),
+            0.5 + 0.4 * float(np.sin(angle)),
+        )
+    G.graph["chromatic_target"] = k
+    return G
+
+
+def chromatic_number(G: nx.Graph) -> int:
+    """Exact chromatic number via simple k-coloring backtracking.
+
+    Iterates ``k = 1, 2, …`` and returns the smallest ``k`` for which a valid
+    coloring exists. Fast enough for the benchmark's graph sizes (n ≤ 14)."""
+    if G.number_of_nodes() == 0:
+        return 0
+    if G.number_of_edges() == 0:
+        return 1
+
+    nodes = sorted(G.nodes(), key=lambda v: -G.degree(v))
+    adj = {v: set(G.neighbors(v)) for v in G.nodes()}
+
+    for k in range(1, len(nodes) + 1):
+        color: dict[int, int] = {}
+        if _try_color(nodes, adj, color, k, 0):
+            return k
+    return len(nodes)
+
+
+def _try_color(
+    nodes: list,
+    adj: dict,
+    color: dict,
+    k: int,
+    idx: int,
+) -> bool:
+    if idx == len(nodes):
+        return True
+    v = nodes[idx]
+    used = {color[u] for u in adj[v] if u in color}
+    for c in range(k):
+        if c in used:
+            continue
+        color[v] = c
+        if _try_color(nodes, adj, color, k, idx + 1):
+            return True
+        del color[v]
+    return False
 
 
 def _voronoi_well_behaved(pts: np.ndarray, max_ratio: float = 1.2) -> bool:

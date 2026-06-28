@@ -61,6 +61,8 @@ assets/
 | `--label-style`, `--node-color`, `--edge-style` | Rendering ablation knobs. |
 | `--include-adjacency-matrix` | Append an adjacency-matrix text block to the prompts. |
 | `--constraint`, `--constraint-values`, `--samples-per-value`, `--edge-tolerance`, `--edge-max-attempts` | Sweep mode — orthogonal to the demo / asset path. See module docstring. |
+| `--special-coloring` | Balanced coloring mode: force a uniform distribution of the chromatic number (the answer) by construction. Restricts the run to the `coloring` task. See below. |
+| `--chromatic-values` | Comma-separated chromatic targets for `--special-coloring`, assigned round-robin. Allowed: `2,3,4`. Default `2,3,4`. |
 
 ## The `--demo` preset
 
@@ -79,6 +81,52 @@ uv run python -m src.benchmark.demo \
 This generates **18 questions** (3 tasks × 3 difficulties × 2 samples),
 arranged 2 per page in `report.pdf` (9 pages of content), with 36 PDFs
 in `assets/`.
+
+## Special / balanced coloring mode
+
+```bash
+# 120 coloring samples, answer uniform over {2, 3, 4} (40 each).
+uv run python -m src.benchmark.demo --special-coloring -n 120 --difficulty medium -o out/balanced
+```
+
+By default the `coloring` task draws a full Delaunay triangulation. Such a
+graph always contains triangles (so χ ≥ 3) and is planar (so χ ≤ 4 by the
+**four-color theorem**), and on medium sizes it concentrates almost entirely
+on **4**. The answer therefore carries little information — a model scores
+well by always guessing 4.
+
+`--special-coloring` fixes this by **constraining graph generation** so the
+chromatic number (the answer) is uniform over a target set. It is built by
+construction, never by rejection-sampling graphs until χ matches:
+
+- The ambient graph is still a Delaunay triangulation **T** (so the Voronoi
+  map stays faithful). We keep a *subgraph* G ⊆ T whose chromatic number is
+  *exactly* the target `k`:
+  - **k = 4** — keep all of T (a random triangulation is 4-chromatic almost
+    always; resampled until χ(T) = 4).
+  - **k ∈ {2, 3}** — keep a planted *k-partite* subset of T's edges (a proper
+    k-coloring derived from a BFS spanning tree, so G is connected and
+    χ(G) ≤ k; for k = 3 one triangle is preserved to force χ(G) ≥ 3).
+- χ(G) is asserted exactly with the backtracking solver as a safety net.
+- The result is **fully seed-deterministic**: the same `--seed` always yields
+  the same samples.
+
+In the map disguise, adjacent regions share a **black land border** while
+non-adjacent regions are pulled apart by an **open-water gap** on a pale-sea
+backdrop, so two regions share a border *iff* their nodes are adjacent in G —
+the disguise stays exactly faithful to the ground truth. For k = 4 there are
+no gaps and the map matches the classic full-triangulation rendering.
+
+**Why no 5?** By the four-color theorem, no faithful planar map ever requires
+five colors, so the target set is capped at `{2, 3, 4}`.
+
+**Known property (not a bug).** Fewer colors inherently allow fewer planar
+edges (a bipartite planar graph has ≤ 2n−4 edges vs ≤ 3n−6 for a
+triangulation), so the *edge count* weakly correlates with the answer. The
+construction maximizes kept edges per target to dampen this, and node count is
+drawn from the same preset for every k (so node count does **not** leak χ).
+The residual edge-count signal is a fundamental property of planar coloring,
+not an artifact of the generator.
 
 ## Vector vs. raster PDFs
 

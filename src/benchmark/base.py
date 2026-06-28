@@ -10,6 +10,7 @@ when they set the ``name`` class attribute.
 
 from __future__ import annotations
 
+import warnings
 from typing import Any, ClassVar, Protocol, TypedDict, runtime_checkable
 
 import networkx as nx
@@ -69,6 +70,7 @@ class BenchmarkTask:
         rng: np.random.Generator,
         difficulty: str,
         node_count: int | None = None,
+        target_chromatic: int | None = None,
     ) -> nx.Graph:
         raise NotImplementedError
 
@@ -97,6 +99,22 @@ class BenchmarkTask:
     ) -> Disguise:
         raise NotImplementedError
 
+    def _warn_unsupported_kwargs(self, kwargs: dict) -> None:
+        """Warn about task-specific ``sample_graph`` knobs this task ignores.
+
+        Every task shares the same ``sample_graph`` signature so ``generate``
+        can call them uniformly, but a knob like ``target_chromatic`` only
+        applies to ``ColoringTask``. Tasks that do not use such knobs absorb
+        them via ``**kwargs`` and pass them here to surface a warning instead
+        of silently dropping an option the caller expected to take effect."""
+        if kwargs:
+            names = ", ".join(sorted(kwargs))
+            warnings.warn(
+                f"{type(self).__name__}.sample_graph does not support "
+                f"argument(s): {names} — ignoring.",
+                stacklevel=3,
+            )
+
     # --- concrete entry point ------------------------------------------------
 
     def generate(
@@ -106,12 +124,20 @@ class BenchmarkTask:
         config: RenderConfig | None = None,
         include_adjacency_matrix: bool = False,
         node_count: int | None = None,
+        target_chromatic: int | None = None,
         direct_pdf_path: str | None = None,
         disguise_pdf_path: str | None = None,
     ) -> Sample:
         cfg = config if config is not None else RenderConfig()
         rng = np.random.default_rng(seed)
-        G = self.sample_graph(rng, difficulty, node_count=node_count)
+        # Forward task-specific knobs only when actually set, so tasks that do
+        # not support them (via **kwargs) don't warn on the default no-op case.
+        extra: dict[str, Any] = {}
+        if target_chromatic is not None:
+            extra["target_chromatic"] = target_chromatic
+        G = self.sample_graph(
+            rng, difficulty, node_count=node_count, **extra
+        )
         G.graph["n_vertices"] = int(G.number_of_nodes())
         G.graph["n_edges"] = int(G.number_of_edges())
 
