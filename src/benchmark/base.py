@@ -17,7 +17,7 @@ import networkx as nx
 import numpy as np
 from PIL import Image
 
-from .rendering import RenderConfig, format_adjacency
+from .rendering import RenderConfig, format_adjacency_list
 
 
 class Sample(TypedDict):
@@ -122,7 +122,7 @@ class BenchmarkTask:
         seed: int,
         difficulty: str = "easy",
         config: RenderConfig | None = None,
-        include_adjacency_matrix: bool = False,
+        include_adjacency_list: bool = False,
         node_count: int | None = None,
         target_chromatic: int | None = None,
         direct_pdf_path: str | None = None,
@@ -143,11 +143,11 @@ class BenchmarkTask:
 
         direct_prompt = self.direct_prompt(G, cfg)
         disguise_prompt = self.disguise_prompt()
-        if include_adjacency_matrix:
-            matrix = format_adjacency(G, cfg.label_style)
-            direct_block = f"Adjacency matrix:\n{matrix}\n"
+        if include_adjacency_list:
+            adj = format_adjacency_list(G, cfg.label_style)
+            direct_block = f"{adj}\n"
             disguise_block = (
-                f"Adjacency matrix from the underlying graph:\n{matrix}\n"
+                f"Adjacency list of the underlying graph:\n{adj}\n"
             )
             direct_prompt = _inject_block(direct_prompt, direct_block)
             disguise_prompt = _inject_block(disguise_prompt, disguise_block)

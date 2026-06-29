@@ -36,7 +36,7 @@ from src.benchmark import RenderConfig, get_all_tasks
 
 
 ABLATIONS: list[tuple[str, RenderConfig, bool]] = [
-    ("baseline (numeric, straight, no matrix)",
+    ("baseline (numeric, straight, no list)",
      RenderConfig(label_style="numeric", edge_style="straight"), False),
     ("letters",
      RenderConfig(label_style="letters", edge_style="straight"), False),
@@ -45,7 +45,7 @@ ABLATIONS: list[tuple[str, RenderConfig, bool]] = [
     ("alt color (#F1948A)",
      RenderConfig(label_style="numeric", edge_style="straight",
                   node_color="#F1948A"), False),
-    ("adjacency matrix",
+    ("adjacency list",
      RenderConfig(label_style="numeric", edge_style="straight"), True),
     ("curved edges (legacy)",
      RenderConfig(label_style="numeric", edge_style="curved"), False),
@@ -90,7 +90,7 @@ def main() -> int:
                 seed=args.seed,
                 difficulty=args.difficulty,
                 config=cfg,
-                include_adjacency_matrix=adj,
+                include_adjacency_list=adj,
             )
             img = _pil_to_flowable(sample["direct_image"], target_w=7 * cm)
             row.append(img)

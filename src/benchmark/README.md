@@ -59,7 +59,7 @@ assets/
 | `--asset-dpi DPI` | Raster DPI for the directed-maze PDF (raster wrapped in PDF). Default 220. |
 | `--demo` | Preset: 3 tasks (coloring, directed_connectivity, shortest_path), 2 samples per difficulty, `--pdf --two-per-page --assets`. |
 | `--label-style`, `--node-color`, `--edge-style` | Rendering ablation knobs. |
-| `--include-adjacency-matrix` | Append an adjacency-matrix text block to the prompts. |
+| `--include-adjacency-list` | Append an adjacency-list text block (with an encoding legend) to the prompts. |
 | `--constraint`, `--constraint-values`, `--samples-per-value`, `--edge-tolerance`, `--edge-max-attempts` | Sweep mode — orthogonal to the demo / asset path. See module docstring. |
 | `--special-coloring` | Balanced coloring mode: force a uniform distribution of the chromatic number (the answer) by construction. Restricts the run to the `coloring` task. See below. |
 | `--chromatic-values` | Comma-separated chromatic targets for `--special-coloring`, assigned round-robin. Allowed: `2,3,4`. Default `2,3,4`. |

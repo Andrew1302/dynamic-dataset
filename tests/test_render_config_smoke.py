@@ -23,7 +23,7 @@ def _check_sample(task_name: str, style: str, include_adj: bool) -> None:
         seed=123,
         difficulty="easy",
         config=cfg,
-        include_adjacency_matrix=include_adj,
+        include_adjacency_list=include_adj,
     )
 
     for key in (
@@ -49,11 +49,11 @@ def _check_sample(task_name: str, style: str, include_adj: bool) -> None:
     assert isinstance(sample["n_edges"], int) and sample["n_edges"] >= 0
 
     if include_adj:
-        assert "Adjacency matrix:" in sample["direct_prompt"], (
-            f"{task_name}/{style}: adjacency matrix missing from prompt"
+        assert "Adj[" in sample["direct_prompt"], (
+            f"{task_name}/{style}: adjacency list missing from prompt"
         )
     else:
-        assert "Adjacency matrix:" not in sample["direct_prompt"]
+        assert "Adj[" not in sample["direct_prompt"]
 
 
 def _check_node_count(task_name: str, node_count: int) -> None:

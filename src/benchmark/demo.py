@@ -129,9 +129,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Edge style for weighted graphs. Unweighted graphs are always straight.",
     )
     parser.add_argument(
-        "--include-adjacency-matrix",
+        "--include-adjacency-list",
         action="store_true",
-        help="Append a text adjacency matrix to the direct-view prompt.",
+        help="Append a text adjacency list to the direct-view prompt.",
     )
 
     # Sweep mode.
@@ -276,7 +276,7 @@ def main(argv: list[str] | None = None) -> int:
             seed=seed,
             difficulty=difficulty,
             config=cfg,
-            include_adjacency_matrix=args.include_adjacency_matrix,
+            include_adjacency_list=args.include_adjacency_list,
             target_chromatic=target_chromatic,
             direct_pdf_path=direct_pdf,
             disguise_pdf_path=disguise_pdf,
@@ -385,7 +385,7 @@ def _run_sweep(args: argparse.Namespace, cfg: RenderConfig) -> int:
                             seed=seed,
                             difficulty="medium",
                             config=cfg,
-                            include_adjacency_matrix=args.include_adjacency_matrix,
+                            include_adjacency_list=args.include_adjacency_list,
                             node_count=value,
                         )
                         achieved_v = _extract_meta(sample, "n_vertices")
@@ -395,7 +395,7 @@ def _run_sweep(args: argparse.Namespace, cfg: RenderConfig) -> int:
                             task=task,
                             target_edges=value,
                             cfg=cfg,
-                            include_adj=args.include_adjacency_matrix,
+                            include_adj=args.include_adjacency_list,
                             base_seed=seed,
                             tol=args.edge_tolerance,
                             max_attempts=args.edge_max_attempts,
@@ -494,7 +494,7 @@ def _sample_for_edge_target(
                         seed=seed,
                         difficulty="medium",
                         config=cfg,
-                        include_adjacency_matrix=include_adj,
+                        include_adjacency_list=include_adj,
                         node_count=nc,
                     )
                     return sample, v, e
@@ -509,7 +509,7 @@ def _sample_for_edge_target(
         seed=seed,
         difficulty="medium",
         config=cfg,
-        include_adjacency_matrix=include_adj,
+        include_adjacency_list=include_adj,
         node_count=nc,
     )
     return sample, v, e

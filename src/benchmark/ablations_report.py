@@ -61,13 +61,13 @@ _SWEEP_NODE_VALUES: tuple[int, ...] = (4, 7, 10, 13)
 
 @dataclass(frozen=True)
 class VisualAblation:
-    """A render-side ablation: one RenderConfig + adjacency-matrix flag."""
+    """A render-side ablation: one RenderConfig + adjacency-list flag."""
 
     key: str
     title: str
     description: str
     config: RenderConfig
-    include_adjacency_matrix: bool = False
+    include_adjacency_list: bool = False
 
 
 _BASELINE_CONFIG = RenderConfig(
@@ -82,7 +82,7 @@ _VISUAL_ABLATIONS: tuple[VisualAblation, ...] = (
         title="Standard (baseline)",
         description=(
             "Default render settings: numeric labels, light-blue nodes, "
-            "straight edges, no adjacency matrix in the prompt."
+            "straight edges, no adjacency list in the prompt."
         ),
         config=_BASELINE_CONFIG,
     ),
@@ -117,14 +117,14 @@ _VISUAL_ABLATIONS: tuple[VisualAblation, ...] = (
         ),
     ),
     VisualAblation(
-        key="adjmatrix",
-        title="Ablation — adjacency matrix in prompt",
+        key="adjlist",
+        title="Ablation — adjacency list in prompt",
         description=(
-            "Direct prompt augmented with a text adjacency matrix. The "
+            "Direct prompt augmented with a text adjacency list. The "
             "image is unchanged from baseline — see the prompt snippet."
         ),
         config=_BASELINE_CONFIG,
-        include_adjacency_matrix=True,
+        include_adjacency_list=True,
     ),
 )
 
@@ -183,7 +183,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "Include direct-prompt snippets under each image. Off by default "
             "to keep the report compact; turn it on to inspect the "
-            "adjacency-matrix ablation."
+            "adjacency-list ablation."
         ),
     )
     return parser.parse_args(argv)
@@ -209,7 +209,7 @@ def main(argv: list[str] | None = None) -> int:
                 seed=args.seed,
                 difficulty=difficulty,
                 config=abl.config,
-                include_adjacency_matrix=abl.include_adjacency_matrix,
+                include_adjacency_list=abl.include_adjacency_list,
             )
             rendered[abl.key][task_name] = sample
             print(
@@ -366,7 +366,7 @@ def _build_pdf(
             Paragraph(
                 f"<b>RenderConfig:</b> label_style={cfg.label_style} · "
                 f"node_color={cfg.node_color} · edge_style={cfg.edge_style} · "
-                f"include_adjacency_matrix={abl.include_adjacency_matrix}",
+                f"include_adjacency_list={abl.include_adjacency_list}",
                 body,
             )
         )
